@@ -1,0 +1,1580 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GM MIDI Player</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg:        #0d0f14;
+    --surface:   #161923;
+    --panel:     #1e2433;
+    --border:    #2a3147;
+    --accent:    #00d4ff;
+    --accent2:   #ff6b35;
+    --green:     #39ff14;
+    --yellow:    #ffd700;
+    --muted:     #4a5568;
+    --text:      #e2e8f0;
+    --text-dim:  #7b8fa8;
+    --radius:    6px;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-ui:   'Barlow', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { font-size: 16px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 48px;
+    background-image:
+      radial-gradient(ellipse at 20% 0%, rgba(0,212,255,.07) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 100%, rgba(255,107,53,.05) 0%, transparent 60%);
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header {
+    width: 100%;
+    max-width: 1100px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .logo-icon {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+  }
+  header h1 {
+    font-family: var(--font-mono);
+    font-size: 1.5rem;
+    letter-spacing: .08em;
+    color: var(--accent);
+  }
+  header .sub {
+    font-size: .8rem;
+    color: var(--text-dim);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  /* ── Main layout ─────────────────────────────────────────── */
+  .app { width: 100%; max-width: 1100px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* ── Card ─────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: .72rem;
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title::before {
+    content: '';
+    display: inline-block;
+    width: 3px; height: 12px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  /* ── File + Soundfont row ─────────────────────────────────── */
+  .top-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media(max-width:640px){ .top-row { grid-template-columns: 1fr; } }
+
+  .file-drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 28px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+  }
+  .file-drop-zone:hover,
+  .file-drop-zone.dragover { border-color: var(--accent); background: rgba(0,212,255,.05); }
+  .file-drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .file-drop-zone .drop-icon { font-size: 2rem; margin-bottom: 8px; }
+  .file-drop-zone .drop-text { font-size: .9rem; color: var(--text-dim); }
+  .file-drop-zone .drop-hint { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+  #file-name {
+    margin-top: 10px;
+    font-family: var(--font-mono);
+    font-size: .8rem;
+    color: var(--accent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  label { display: block; font-size: .85rem; color: var(--text-dim); margin-bottom: 6px; }
+
+  select, input[type=range] { outline: none; }
+
+  select {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 10px 12px;
+    font-family: var(--font-ui);
+    font-size: .9rem;
+    cursor: pointer;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234a5568' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+    transition: border-color .2s;
+  }
+  select:hover, select:focus { border-color: var(--accent); }
+  select option { background: var(--panel); }
+
+  .sf-status {
+    margin-top: 8px;
+    font-size: .78rem;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+    transition: background .3s;
+  }
+  .dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+  .dot.ready   { background: var(--green); }
+  .dot.error   { background: var(--accent2); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* ── Transport ────────────────────────────────────────────── */
+  .transport {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .btn {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: .85rem;
+    padding: 10px 18px;
+    cursor: pointer;
+    letter-spacing: .05em;
+    transition: background .15s, border-color .15s, color .15s;
+    display: flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+  }
+  .btn:hover   { border-color: var(--accent); color: var(--accent); }
+  .btn:active  { background: rgba(0,212,255,.1); }
+  .btn:disabled{ opacity:.35; cursor:not-allowed; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #000;
+    font-weight: 700;
+  }
+  .btn-primary:hover { background: #00b8e0; border-color: #00b8e0; color: #000; }
+
+  .btn-stop { --c: var(--accent2); border-color: var(--c); color: var(--c); }
+  .btn-stop:hover { background: rgba(255,107,53,.1); }
+
+  /* progress */
+  .progress-area { flex: 1; min-width: 200px; }
+  .progress-bar-wrap {
+    position: relative;
+    height: 6px;
+    background: var(--panel);
+    border-radius: 3px;
+    cursor: pointer;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 3px;
+    transition: width .25s linear;
+    pointer-events: none;
+  }
+  .time-row {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: .75rem;
+    color: var(--text-dim);
+    margin-top: 5px;
+  }
+
+  /* tempo + loop */
+  .transport-extras {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    font-size: .85rem;
+  }
+  .tempo-display {
+    font-family: var(--font-mono);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    color: var(--accent);
+  }
+  .loop-toggle {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    transition: border-color .15s, color .15s;
+  }
+  .loop-toggle input { display: none; }
+  .loop-toggle.active { border-color: var(--accent2); color: var(--accent2); }
+  .loop-toggle:hover { border-color: var(--accent); }
+  .loop-toggle:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Mixer ─────────────────────────────────────────────────── */
+  .mixer-scroll { overflow-x: auto; }
+
+  .mixer-grid {
+    display: grid;
+    grid-template-columns: repeat(16, minmax(62px, 1fr));
+    gap: 8px;
+    min-width: 1020px;
+  }
+
+  .channel-strip {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    transition: border-color .2s;
+  }
+  .channel-strip.active { border-color: rgba(0,212,255,.4); }
+  .channel-strip.drum   { border-color: rgba(255,107,53,.3); }
+
+  .ch-num {
+    font-family: var(--font-mono);
+    font-size: .65rem;
+    color: var(--text-dim);
+    letter-spacing: .05em;
+  }
+  .ch-name {
+    font-size: .6rem;
+    color: var(--text-dim);
+    text-align: center;
+    height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1.2;
+    width: 100%;
+    overflow: hidden;
+    word-break: break-word;
+  }
+
+  /* VU meter */
+  .vu-wrap {
+    width: 100%; height: 56px;
+    background: #0a0c10;
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+    display: flex; align-items: flex-end;
+    gap: 2px;
+    padding: 2px;
+  }
+  .vu-bar {
+    flex: 1;
+    border-radius: 2px 2px 0 0;
+    background: linear-gradient(to top, var(--green) 0%, var(--yellow) 75%, var(--accent2) 100%);
+    height: 0%;
+    transition: height .05s ease-out;
+  }
+
+  /* volume slider */
+  .vol-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    cursor: pointer;
+    outline: none;
+  }
+  .vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    transition: transform .1s;
+  }
+  .vol-slider::-webkit-slider-thumb:hover { transform: scale(1.3); }
+  .vol-slider::-moz-range-thumb {
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: none;
+  }
+  .vol-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+  /* pan knob (visual only) */
+  .pan-row { display: flex; align-items: center; gap: 4px; width: 100%; }
+  .pan-label { font-size: .55rem; color: var(--muted); font-family: var(--font-mono); }
+  .pan-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    flex: 1;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    cursor: pointer;
+    outline: none;
+  }
+  .pan-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent2);
+    cursor: pointer;
+  }
+  .pan-slider::-moz-range-thumb {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent2);
+    border: none;
+  }
+  .pan-slider:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; border-radius: 3px; }
+
+  /* mute / solo */
+  .ms-row { display: flex; gap: 4px; width: 100%; }
+  .ms-btn {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: .6rem;
+    letter-spacing: .05em;
+    padding: 4px 2px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    text-align: center;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .ms-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .ms-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ms-btn.muted  { background: rgba(255,107,53,.2); border-color: var(--accent2); color: var(--accent2); }
+  .ms-btn.soloed { background: rgba(255,215,0,.2);  border-color: var(--yellow);  color: var(--yellow); }
+
+  .vol-val {
+    font-family: var(--font-mono);
+    font-size: .6rem;
+    color: var(--muted);
+  }
+
+  /* ── Status log ─────────────────────────────────────────────── */
+  #status-log {
+    font-family: var(--font-mono);
+    font-size: .75rem;
+    color: var(--text-dim);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    max-height: 80px;
+    overflow-y: auto;
+    line-height: 1.7;
+  }
+  #status-log .err { color: var(--accent2); }
+  #status-log .ok  { color: var(--green); }
+  #status-log .info{ color: var(--accent); }
+
+  /* ── Scrollbar ──────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ── Responsive ─────────────────────────────────────────────── */
+  @media(max-width:480px){
+    .transport { flex-direction: column; align-items: stretch; }
+    .transport-extras { justify-content: space-between; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo-icon" aria-hidden="true">🎹</div>
+  <div>
+    <h1>GM MIDI PLAYER</h1>
+    <div class="sub">General MIDI · Soundfont · 16-Kanal Mixer</div>
+  </div>
+</header>
+
+<main class="app" role="main">
+
+  <!-- File + Soundfont ─────────────────────────────── -->
+  <div class="top-row">
+
+    <div class="card">
+      <div class="card-title">MIDI Datei</div>
+      <div class="file-drop-zone" id="drop-zone"
+           role="button" tabindex="0"
+           aria-label="MIDI-Datei auswählen oder per Drag &amp; Drop hineinziehen">
+        <input type="file" id="midi-file" accept=".mid,.midi"
+               aria-label="MIDI-Datei auswählen">
+        <div class="drop-icon" aria-hidden="true">🎼</div>
+        <div class="drop-text">MIDI-Datei auswählen</div>
+        <div class="drop-hint">oder hierher ziehen (.mid / .midi)</div>
+      </div>
+      <div id="file-name" aria-live="polite">– keine Datei geladen –</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Soundfont</div>
+      <label for="sf-select">Soundfont auswählen</label>
+      <select id="sf-select" aria-label="Soundfont auswählen">
+        <option value="">– wird geladen … –</option>
+      </select>
+      <div class="sf-status">
+        <div class="dot" id="sf-dot" aria-hidden="true"></div>
+        <span id="sf-status-text" aria-live="polite">Kein Soundfont geladen</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Transport ────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">Transport</div>
+    <div class="transport">
+      <button class="btn btn-primary" id="btn-play"  disabled aria-label="Wiedergabe starten">▶ PLAY</button>
+      <button class="btn"             id="btn-pause" disabled aria-label="Pause">⏸ PAUSE</button>
+      <button class="btn btn-stop"    id="btn-stop"  disabled aria-label="Stop">⏹ STOP</button>
+
+      <div class="progress-area" role="group" aria-label="Wiedergabe-Fortschritt">
+        <div class="progress-bar-wrap" id="progress-wrap"
+             role="slider" aria-label="Position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
+             tabindex="0">
+          <div class="progress-bar-fill" id="progress-fill"></div>
+        </div>
+        <div class="time-row">
+          <span id="time-cur" aria-live="off">0:00</span>
+          <span id="time-tot">0:00</span>
+        </div>
+      </div>
+
+      <div class="transport-extras">
+        <div class="tempo-display" id="tempo-display" aria-label="Tempo">120 BPM</div>
+        <label class="loop-toggle" id="loop-label" aria-label="Loop">
+          <input type="checkbox" id="loop-cb" aria-label="Wiedergabe wiederholen">
+          🔁 LOOP
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- Mixer ────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-title">16-Kanal Mixer</div>
+    <div class="mixer-scroll" role="region" aria-label="Mixer-Kanäle">
+      <div class="mixer-grid" id="mixer-grid" role="list"></div>
+    </div>
+  </div>
+
+  <!-- Status log ───────────────────────────────────── -->
+  <div id="status-log" role="log" aria-label="Status-Meldungen" aria-live="polite"></div>
+
+</main>
+
+<!-- ─────────────────────────── SCRIPTS ─────────────────────────── -->
+<script>
+/* ================================================================
+   MIDI PLAYER — GM Standard mit Soundfont (SF2) via MIDI.js/WebAudioFont
+   Wir verwenden:
+   1. MIDI-Parser: eigene, leichtgewichtige Implementierung
+   2. Audio: Web Audio API + AudioWorklet-freier Ansatz via
+      AudioBufferSourceNode / OscillatorNode als Fallback,
+      Haupt-Engine: WebAudioFont (globale Soundfont-Bibliothek)
+      ODER: wenn SF2 auf /soundfonts liegt, laden wir MIDI.js
+   Pragmatisch: wir verwenden midi.js + soundfont-player Kombination
+   über CDN-freie Lösung:
+   → Eigener MIDI-Parser + WebAudioFont-Bibliothek
+   ================================================================ */
+
+/* ── 1. MIDI-Parser ─────────────────────────────────────────────── */
+class MidiParser {
+  constructor(buffer) {
+    this.data = new DataView(buffer);
+    this.pos  = 0;
+    this.tracks = [];
+    this.header = null;
+  }
+
+  readUint8()  { return this.data.getUint8(this.pos++); }
+  readUint16() { const v = this.data.getUint16(this.pos); this.pos+=2; return v; }
+  readUint32() { const v = this.data.getUint32(this.pos); this.pos+=4; return v; }
+
+  readVarLen() {
+    let v=0, b;
+    do { b=this.readUint8(); v=(v<<7)|(b&0x7f); } while(b&0x80);
+    return v;
+  }
+
+  readBytes(n) {
+    const b = []; for(let i=0;i<n;i++) b.push(this.readUint8()); return b;
+  }
+
+  readString(n) {
+    let s=''; for(let i=0;i<n;i++) s+=String.fromCharCode(this.readUint8()); return s;
+  }
+
+  parse() {
+    // Header Chunk
+    const hdrTag = this.readString(4);
+    if(hdrTag !== 'MThd') throw new Error('Kein gültiges MIDI-File');
+    this.readUint32(); // chunk length (always 6)
+    const fmt    = this.readUint16();
+    const nTrk   = this.readUint16();
+    const tpqn   = this.readUint16();
+    this.header  = { format: fmt, numTracks: nTrk, ticksPerBeat: tpqn };
+
+    for(let t=0; t<nTrk; t++) {
+      const tag = this.readString(4);
+      if(tag !== 'MTrk') throw new Error(`Track ${t}: kein MTrk-Tag`);
+      const len = this.readUint32();
+      const end = this.pos + len;
+      const events = [];
+      let tick = 0, lastStatus = 0;
+
+      while(this.pos < end) {
+        const delta = this.readVarLen();
+        tick += delta;
+        let status = this.data.getUint8(this.pos);
+
+        // Running status
+        if(status < 0x80) { status = lastStatus; }
+        else { lastStatus = status; this.pos++; }
+
+        const type = status & 0xf0;
+        const ch   = status & 0x0f;
+
+        if(status === 0xff) {
+          // Meta event
+          const mType = this.readUint8();
+          const mLen  = this.readVarLen();
+          const mData = this.readBytes(mLen);
+          if(mType === 0x51) { // Set Tempo
+            const usPerBeat = (mData[0]<<16)|(mData[1]<<8)|mData[2];
+            events.push({ tick, type:'tempo', usPerBeat });
+          } else if(mType === 0x03) { // Track name
+            const name = mData.map(b=>String.fromCharCode(b)).join('').replace(/\0/g,'');
+            events.push({ tick, type:'trackName', name });
+          } else if(mType === 0x2f) {
+            events.push({ tick, type:'endOfTrack' });
+          }
+        } else if(status === 0xf0 || status === 0xf7) {
+          // SysEx
+          const sLen = this.readVarLen();
+          this.pos += sLen;
+        } else {
+          switch(type) {
+            case 0x80: { const n=this.readUint8(),v=this.readUint8(); events.push({tick,type:'noteOff',ch,note:n,vel:v}); break; }
+            case 0x90: { const n=this.readUint8(),v=this.readUint8(); events.push({tick,type:v?'noteOn':'noteOff',ch,note:n,vel:v}); break; }
+            case 0xa0: { const n=this.readUint8(),v=this.readUint8(); events.push({tick,type:'polyAt',ch,note:n,vel:v}); break; }
+            case 0xb0: { const c=this.readUint8(),v=this.readUint8(); events.push({tick,type:'cc',ch,ctrl:c,val:v}); break; }
+            case 0xc0: { const p=this.readUint8(); events.push({tick,type:'programChange',ch,prog:p}); break; }
+            case 0xd0: { const v=this.readUint8(); events.push({tick,type:'chanAt',ch,val:v}); break; }
+            case 0xe0: { const lo=this.readUint8(),hi=this.readUint8(); events.push({tick,type:'pitchBend',ch,val:(hi<<7)|lo}); break; }
+            default:   { /* skip */ }
+          }
+        }
+      }
+      this.pos = end;
+      this.tracks.push(events);
+    }
+    return { header: this.header, tracks: this.tracks };
+  }
+}
+
+/* ── 2. MIDI-Daten zusammenführen (alle Tracks → eine Timeline) ─── */
+function mergeTracks(parsed) {
+  const all = [];
+  for(const track of parsed.tracks) {
+    for(const ev of track) all.push(ev);
+  }
+  all.sort((a,b)=>a.tick-b.tick);
+  return all;
+}
+
+function calcDuration(events, tpqn) {
+  // Build tempo map
+  let maxTick = 0;
+  for(const e of events) if(e.tick > maxTick) maxTick = e.tick;
+  return ticksToSeconds(maxTick, buildTempoMap(events), tpqn);
+}
+
+function buildTempoMap(events) {
+  const map = [{ tick:0, usPerBeat: 500000 }];
+  for(const e of events) if(e.type==='tempo') map.push(e);
+  map.sort((a,b)=>a.tick-b.tick);
+  return map;
+}
+
+function ticksToSeconds(tick, tempoMap, tpqn) {
+  let seconds = 0, prevTick = 0, prevTempo = 500000;
+  for(const tm of tempoMap) {
+    if(tm.tick >= tick) break;
+    const delta = Math.min(tm.tick, tick) - prevTick;
+    seconds += delta * (prevTempo / 1e6) / tpqn;
+    prevTick  = tm.tick;
+    prevTempo = tm.usPerBeat;
+  }
+  seconds += (tick - prevTick) * (prevTempo / 1e6) / tpqn;
+  return seconds;
+}
+
+/* ── 3. GM-Instrument-Namen ─────────────────────────────────────── */
+const GM_INSTRUMENTS = [
+  'Acoustic Grand Piano','Bright Acoustic Piano','Electric Grand Piano','Honky-tonk Piano',
+  'Electric Piano 1','Electric Piano 2','Harpsichord','Clavinet',
+  'Celesta','Glockenspiel','Music Box','Vibraphone','Marimba','Xylophone','Tubular Bells','Dulcimer',
+  'Drawbar Organ','Percussive Organ','Rock Organ','Church Organ','Reed Organ','Accordion','Harmonica','Tango Accordion',
+  'Acoustic Guitar (nylon)','Acoustic Guitar (steel)','Electric Guitar (jazz)','Electric Guitar (clean)',
+  'Electric Guitar (muted)','Overdriven Guitar','Distortion Guitar','Guitar harmonics',
+  'Acoustic Bass','Electric Bass (finger)','Electric Bass (pick)','Fretless Bass',
+  'Slap Bass 1','Slap Bass 2','Synth Bass 1','Synth Bass 2',
+  'Violin','Viola','Cello','Contrabass','Tremolo Strings','Pizzicato Strings','Orchestral Harp','Timpani',
+  'String Ensemble 1','String Ensemble 2','SynthStrings 1','SynthStrings 2',
+  'Choir Aahs','Voice Oohs','Synth Voice','Orchestra Hit',
+  'Trumpet','Trombone','Tuba','Muted Trumpet','French Horn','Brass Section','SynthBrass 1','SynthBrass 2',
+  'Soprano Sax','Alto Sax','Tenor Sax','Baritone Sax',
+  'Oboe','English Horn','Bassoon','Clarinet',
+  'Piccolo','Flute','Recorder','Pan Flute','Blown bottle','Shakuhachi','Whistle','Ocarina',
+  'Lead 1 (square)','Lead 2 (sawtooth)','Lead 3 (calliope)','Lead 4 (chiff)',
+  'Lead 5 (charang)','Lead 6 (voice)','Lead 7 (fifths)','Lead 8 (bass+lead)',
+  'Pad 1 (new age)','Pad 2 (warm)','Pad 3 (polysynth)','Pad 4 (choir)',
+  'Pad 5 (bowed)','Pad 6 (metallic)','Pad 7 (halo)','Pad 8 (sweep)',
+  'FX 1 (rain)','FX 2 (soundtrack)','FX 3 (crystal)','FX 4 (atmosphere)',
+  'FX 5 (brightness)','FX 6 (goblins)','FX 7 (echoes)','FX 8 (sci-fi)',
+  'Sitar','Banjo','Shamisen','Koto','Kalimba','Bag pipe','Fiddle','Shanai',
+  'Tinkle Bell','Agogo','Steel Drums','Woodblock','Taiko Drum','Melodic Tom','Synth Drum','Reverse Cymbal',
+  'Guitar Fret Noise','Breath Noise','Seashore','Bird Tweet','Telephone Ring','Helicopter','Applause','Gunshot'
+];
+
+/* ── 4. Soundfont-Loader (SF2 via MIDI.js-kompatibles Format) ────── */
+/* Wir nutzen WebAudioFont-Konzept: JSON-basierte Soundfonts           */
+
+let audioCtx = null;
+let soundfontData = {}; // { programNumber: { [note]: AudioBuffer } }
+let sfLoaded = false;
+let sfLoadingPromise = null;
+
+function getAudioCtx() {
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  return audioCtx;
+}
+
+/* Master gain per channel */
+const channelGains  = new Array(16).fill(null);
+const channelPans   = new Array(16).fill(null);
+const channelMuted  = new Array(16).fill(false);
+const channelSolo   = new Array(16).fill(false);
+const channelVol    = new Array(16).fill(100);
+const channelPanVal = new Array(16).fill(64);
+const channelProg   = new Array(16).fill(0);
+const channelActive = new Array(16).fill(false); // recently had a note
+const channelVU     = new Array(16).fill(0);
+
+function getChannelNodes(ch) {
+  const ctx = getAudioCtx();
+  if(!channelGains[ch]) {
+    const g = ctx.createGain();
+    const p = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
+    g.connect(p);
+    p.connect(ctx.destination);
+    channelGains[ch] = g;
+    channelPans[ch]  = p;
+    applyChannelVol(ch);
+    applyChannelPan(ch);
+  }
+  return { gain: channelGains[ch], panner: channelPans[ch] };
+}
+
+function applyChannelVol(ch) {
+  if(!channelGains[ch]) return;
+  const v = channelMuted[ch] ? 0 : channelVol[ch]/127;
+  channelGains[ch].gain.setTargetAtTime(v, getAudioCtx().currentTime, 0.02);
+}
+
+function applyChannelPan(ch) {
+  if(!channelPans[ch]) return;
+  const p = (channelPanVal[ch]-64)/64;
+  if(channelPans[ch].pan) channelPans[ch].pan.value = p;
+}
+
+/* ── 5. Soundfont laden ─────────────────────────────────────────── */
+/* Unterstützte Formate:
+   a) WebAudioFont JS (MIDI_Xxxxx_sf2_file.js) → window._waf_*
+   b) Fallback: einfacher Synth (OscillatorNode)                    */
+
+let useOscFallback = false;
+let wafBuffers = {}; // program → { note: AudioBuffer }
+let sfName = '';
+
+async function loadSoundfont(path) {
+  setSfStatus('loading', `Lade ${path.split('/').pop()} …`);
+  sfLoaded = false;
+  wafBuffers = {};
+  soundfontData = {};
+  useOscFallback = false;
+
+  const ext = path.split('.').pop().toLowerCase();
+
+  try {
+    if(ext === 'js') {
+      await loadWAFScript(path);
+    } else if(ext === 'sf2') {
+      await loadSF2Binary(path);
+    } else {
+      throw new Error('Unbekanntes Soundfont-Format');
+    }
+    sfLoaded = true;
+    setSfStatus('ready', `Bereit: ${path.split('/').pop()}`);
+    log(`Soundfont geladen: ${path.split('/').pop()}`, 'ok');
+  } catch(err) {
+    setSfStatus('error', `Fehler – Synth-Fallback aktiv`);
+    log(`Soundfont-Fehler: ${err.message} → Oscillator-Fallback`, 'err');
+    useOscFallback = true;
+    sfLoaded = true; // erlaubt Play
+  }
+}
+
+/* WebAudioFont JS-Loader */
+async function loadWAFScript(path) {
+  // Remove old WAF scripts
+  document.querySelectorAll('.waf-script').forEach(s=>s.remove());
+  return new Promise((resolve, reject) => {
+    const sc = document.createElement('script');
+    sc.src   = path;
+    sc.className = 'waf-script';
+    sc.onload = () => {
+      // WAF scripts set window.MIDI_xxx variables
+      // We try to find them
+      const keys = Object.keys(window).filter(k=>k.match(/^(MIDI_|_waf_)/));
+      if(keys.length === 0) { reject(new Error('Keine WAF-Daten gefunden')); return; }
+      parseWAFData(keys);
+      resolve();
+    };
+    sc.onerror = ()=>reject(new Error(`Script konnte nicht geladen werden: ${path}`));
+    document.head.appendChild(sc);
+  });
+}
+
+function parseWAFData(keys) {
+  const ctx = getAudioCtx();
+  for(const key of keys) {
+    const data = window[key];
+    if(!data || !data.zones) continue;
+    // extract program number from variable name if possible
+    const prog = data.program !== undefined ? data.program : 0;
+    if(!wafBuffers[prog]) wafBuffers[prog] = {};
+    for(const zone of data.zones) {
+      if(!zone.sample) continue;
+      try {
+        // Decode base64 sample
+        const raw  = atob(zone.sample);
+        const buf  = new Uint8Array(raw.length);
+        for(let i=0;i<raw.length;i++) buf[i]=raw.charCodeAt(i);
+        // decode async later; store encoded for now
+        wafBuffers[prog][zone.midi] = { encoded: buf.buffer, zone };
+      } catch(e){}
+    }
+  }
+}
+
+/* SF2 binary loader – simplified: extract smpl chunk as WAV approximation */
+/* Full SF2 parsing is very complex; we do a best-effort approach           */
+async function loadSF2Binary(path) {
+  const resp = await fetch(path);
+  if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const buffer = await resp.arrayBuffer();
+  parseSF2(buffer);
+}
+
+function parseSF2(buf) {
+  // Very simplified SF2 parser: extract sample data from smpl chunk
+  const view = new DataView(buf);
+  const uint8 = new Uint8Array(buf);
+
+  function readStr(off, len) {
+    let s=''; for(let i=0;i<len;i++) { const c=uint8[off+i]; if(!c) break; s+=String.fromCharCode(c); }
+    return s;
+  }
+
+  // Find RIFF header
+  const riff = readStr(0,4);
+  if(riff!=='RIFF') throw new Error('Kein RIFF-File');
+  const sfbk = readStr(8,4);
+  if(sfbk!=='sfbk') throw new Error('Kein SF2-File');
+
+  // Quick scan: find 'smpl' chunk
+  let offset = 12;
+  const fileSize = buf.byteLength;
+  let smplOffset = -1, smplSize = 0;
+  let phdrOffset = -1, phdrSize = 0;
+  let pgenOffset = -1, pgenSize = 0;
+  let ibagOffset = -1;
+  let igenOffset = -1, igenSize = 0;
+  let instOffset = -1;
+  let shdrOffset = -1, shdrSize = 0;
+
+  while(offset < fileSize-8) {
+    const tag = readStr(offset,4);
+    const size = view.getUint32(offset+4,true);
+    if(tag==='smpl') { smplOffset=offset+8; smplSize=size; }
+    if(tag==='phdr') { phdrOffset=offset+8; phdrSize=size; }
+    if(tag==='pgen') { pgenOffset=offset+8; pgenSize=size; }
+    if(tag==='ibag') { ibagOffset=offset+8; }
+    if(tag==='igen') { igenOffset=offset+8; igenSize=size; }
+    if(tag==='inst') { instOffset=offset+8; }
+    if(tag==='shdr') { shdrOffset=offset+8; shdrSize=size; }
+    if(tag==='LIST') { offset+=12; continue; } // dive into LIST
+    offset += 8 + size + (size%2);
+  }
+
+  if(smplOffset<0) throw new Error('SF2: kein smpl-Chunk gefunden');
+
+  // Parse SampleHeaders (shdr)
+  const samples = [];
+  if(shdrOffset>0) {
+    for(let i=shdrOffset; i<shdrOffset+shdrSize-46; i+=46) {
+      const name     = readStr(i,20);
+      const start    = view.getUint32(i+20,true);
+      const end      = view.getUint32(i+24,true);
+      const loopS    = view.getUint32(i+28,true);
+      const loopE    = view.getUint32(i+32,true);
+      const rate     = view.getUint32(i+36,true);
+      const origPitch= uint8[i+40];
+      const pitchCorr= view.getInt8(i+41);
+      const smpLink  = view.getUint16(i+42,true);
+      const smpType  = view.getUint16(i+44,true);
+      samples.push({ name, start, end, loopS, loopE, rate, origPitch, pitchCorr, smpType });
+    }
+  }
+
+  // Build AudioBuffers for each sample
+  if(samples.length > 0 && smplOffset > 0) {
+    const ctx = getAudioCtx();
+    // Store samples keyed by origPitch for program 0 (simplified)
+    // A full SF2 implementation would map instruments properly
+    soundfontData[0] = {};
+    for(const s of samples) {
+      if(s.smpType===0 || s.name==='EOS') continue;
+      const len = s.end - s.start;
+      if(len<=0 || s.start*2+len*2 > smplSize) continue;
+      const abuf = ctx.createBuffer(1, len, s.rate||44100);
+      const ch   = abuf.getChannelData(0);
+      for(let i=0;i<len;i++) {
+        const rawSample = view.getInt16(smplOffset + (s.start+i)*2, true);
+        ch[i] = rawSample / 32768;
+      }
+      soundfontData[0][s.origPitch] = { buffer: abuf, loopS: s.loopS-s.start, loopE: s.loopE-s.start, rate: s.rate, origPitch: s.origPitch };
+    }
+    log(`SF2: ${samples.length} Samples geparst`, 'info');
+  }
+}
+
+/* ── 6. Note spielen ────────────────────────────────────────────── */
+const activeNotes = {}; // `ch-note` → {source, gain}
+
+function noteOn(ch, note, vel) {
+  const ctx = getAudioCtx();
+  const { gain: chGain } = getChannelNodes(ch);
+  const key = `${ch}-${note}`;
+
+  // Stop existing note
+  noteOff(ch, note);
+
+  // Mark channel active for VU
+  channelActive[ch] = true;
+  channelVU[ch] = Math.min(1, vel/127);
+
+  const velocity = vel / 127;
+
+  if(useOscFallback) {
+    // Oscillator synth fallback
+    const freq = 440 * Math.pow(2, (note-69)/12);
+    const osc  = ctx.createOscillator();
+    const env  = ctx.createGain();
+    osc.type   = ch===9 ? 'square' : 'sine';
+    osc.frequency.value = freq;
+    env.gain.setValueAtTime(0, ctx.currentTime);
+    env.gain.linearRampToValueAtTime(velocity * 0.5, ctx.currentTime + 0.01);
+    env.gain.setTargetAtTime(velocity * 0.3, ctx.currentTime + 0.01, 0.1);
+    osc.connect(env); env.connect(chGain);
+    osc.start();
+    activeNotes[key] = { source: osc, gain: env, type: 'osc' };
+    return;
+  }
+
+  // Try WAF
+  if(Object.keys(wafBuffers).length>0) {
+    playWAF(ch, note, vel, velocity, chGain, ctx, key);
+    return;
+  }
+
+  // Try SF2
+  if(Object.keys(soundfontData).length>0) {
+    playSF2(ch, note, vel, velocity, chGain, ctx, key);
+    return;
+  }
+
+  // Fallback
+  noteOnOsc(ch, note, vel, velocity, chGain, ctx, key);
+}
+
+async function playWAF(ch, note, vel, velocity, chGain, ctx, key) {
+  const prog = ch===9 ? 128 : (channelProg[ch]||0);
+  let bank = wafBuffers[prog] || wafBuffers[0];
+  if(!bank) { noteOnOsc(ch,note,vel,velocity,chGain,ctx,key); return; }
+
+  // Find closest note
+  let zoneData = bank[note];
+  if(!zoneData) {
+    let closest = null, minDist=999;
+    for(const n of Object.keys(bank)) {
+      const d=Math.abs(n-note); if(d<minDist){minDist=d;closest=n;}
+    }
+    zoneData = bank[closest];
+  }
+  if(!zoneData) { noteOnOsc(ch,note,vel,velocity,chGain,ctx,key); return; }
+
+  let abuf = zoneData._abuf;
+  if(!abuf) {
+    try {
+      abuf = await ctx.decodeAudioData(zoneData.encoded.slice(0));
+      zoneData._abuf = abuf;
+    } catch(e) { noteOnOsc(ch,note,vel,velocity,chGain,ctx,key); return; }
+  }
+
+  const src  = ctx.createBufferSource();
+  const env  = ctx.createGain();
+  src.buffer = abuf;
+  const z    = zoneData.zone;
+  const origNote = z.midi;
+  src.playbackRate.value = Math.pow(2,(note-origNote)/12);
+  env.gain.setValueAtTime(velocity * (z.gain||1), ctx.currentTime);
+  if(z.loopStart && z.loopEnd) { src.loop=true; src.loopStart=z.loopStart/ctx.sampleRate; src.loopEnd=z.loopEnd/ctx.sampleRate; }
+  src.connect(env); env.connect(chGain);
+  src.start();
+  activeNotes[key] = { source: src, gain: env, type: 'waf' };
+}
+
+function playSF2(ch, note, vel, velocity, chGain, ctx, key) {
+  const prog = ch===9 ? 0 : (channelProg[ch]||0);
+  const bank = soundfontData[prog] || soundfontData[0];
+  if(!bank) { noteOnOsc(ch,note,vel,velocity,chGain,ctx,key); return; }
+  let sd = bank[note];
+  if(!sd) {
+    let closest=null, minDist=999;
+    for(const n of Object.keys(bank)) { const d=Math.abs(n-note); if(d<minDist){minDist=d;closest=n;} }
+    sd = bank[closest];
+  }
+  if(!sd) { noteOnOsc(ch,note,vel,velocity,chGain,ctx,key); return; }
+  const src = ctx.createBufferSource();
+  const env = ctx.createGain();
+  src.buffer = sd.buffer;
+  src.playbackRate.value = Math.pow(2,(note - sd.origPitch)/12);
+  env.gain.setValueAtTime(velocity, ctx.currentTime);
+  src.connect(env); env.connect(chGain);
+  src.start();
+  activeNotes[key] = { source: src, gain: env, type: 'sf2' };
+}
+
+function noteOnOsc(ch, note, vel, velocity, chGain, ctx, key) {
+  const freq = 440 * Math.pow(2,(note-69)/12);
+  const osc  = ctx.createOscillator();
+  const env  = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  env.gain.setValueAtTime(0, ctx.currentTime);
+  env.gain.linearRampToValueAtTime(velocity*0.4, ctx.currentTime+0.01);
+  osc.connect(env); env.connect(chGain);
+  osc.start();
+  activeNotes[key] = { source: osc, gain: env, type: 'osc' };
+}
+
+function noteOff(ch, note) {
+  const ctx = getAudioCtx();
+  const key = `${ch}-${note}`;
+  const n   = activeNotes[key];
+  if(!n) return;
+  const t = ctx.currentTime;
+  try {
+    n.gain.gain.cancelScheduledValues(t);
+    n.gain.gain.setTargetAtTime(0, t, 0.05);
+    n.source.stop(t + 0.3);
+  } catch(e){}
+  delete activeNotes[key];
+}
+
+function allNotesOff() {
+  for(const key of Object.keys(activeNotes)) {
+    const n = activeNotes[key];
+    try { n.gain.gain.setTargetAtTime(0, getAudioCtx().currentTime, 0.02); n.source.stop(getAudioCtx().currentTime+0.1); } catch(e){}
+    delete activeNotes[key];
+  }
+}
+
+/* ── 7. Playback-Engine ─────────────────────────────────────────── */
+let midi        = null;     // parsed MIDI
+let events      = [];       // merged event timeline
+let tempoMap    = [];
+let tpqn        = 480;
+let totalSec    = 0;
+
+let playing     = false;
+let paused      = false;
+let pauseTick   = 0;
+let startTime   = 0;         // audioCtx time when playback started
+let startTick   = 0;
+let eventIdx    = 0;
+let loopEnabled = false;
+let rafId       = null;
+
+function play(fromTick=0) {
+  if(!midi || !sfLoaded) return;
+  allNotesOff();
+  playing   = true;
+  paused    = false;
+  startTick = fromTick;
+  eventIdx  = events.findIndex(e=>e.tick>=fromTick);
+  if(eventIdx<0) eventIdx = events.length;
+  const ctx = getAudioCtx();
+  startTime = ctx.currentTime - ticksToSeconds(fromTick, tempoMap, tpqn);
+  scheduleLoop();
+  updateButtons();
+}
+
+function pause() {
+  if(!playing) return;
+  if(!paused) {
+    paused    = true;
+    pauseTick = currentTick();
+    playing   = false;
+    allNotesOff();
+    cancelAnimationFrame(rafId);
+    updateButtons();
+  } else {
+    play(pauseTick);
+  }
+}
+
+function stop() {
+  playing = false;
+  paused  = false;
+  allNotesOff();
+  cancelAnimationFrame(rafId);
+  // reset channels
+  for(let i=0;i<16;i++) {
+    channelProg[i]=0;
+    channelVU[i]=0;
+    channelActive[i]=false;
+  }
+  updateProgress(0);
+  updateButtons();
+  updateMixerState();
+}
+
+function currentTick() {
+  if(!playing) return pauseTick;
+  const elapsed = getAudioCtx().currentTime - startTime;
+  // Convert elapsed seconds back to ticks using tempo map
+  let sec=0, prevTick=0, prevTempo=500000;
+  for(const tm of tempoMap) {
+    const segSec = (tm.tick-prevTick)*(prevTempo/1e6)/tpqn;
+    if(sec+segSec>=elapsed) break;
+    sec    += segSec;
+    prevTick= tm.tick;
+    prevTempo=tm.usPerBeat;
+  }
+  const remainSec = elapsed - sec;
+  return prevTick + remainSec * tpqn / (prevTempo/1e6);
+}
+
+function scheduleLoop() {
+  if(!playing) return;
+  const ctx    = getAudioCtx();
+  const lookahead = 0.1; // seconds
+  const ctxNow = ctx.currentTime;
+  const horizon= ctxNow + lookahead;
+
+  while(eventIdx < events.length) {
+    const ev  = events[eventIdx];
+    const evT = startTime + ticksToSeconds(ev.tick, tempoMap, tpqn);
+    if(evT > horizon) break;
+    eventIdx++;
+
+    const schedTime = Math.max(ctxNow, evT);
+    if(ev.type==='noteOn')       schedNoteOn(ev.ch, ev.note, ev.vel, schedTime);
+    else if(ev.type==='noteOff') schedNoteOff(ev.ch, ev.note, schedTime);
+    else if(ev.type==='programChange') {
+      channelProg[ev.ch] = ev.prog;
+      updateChannelName(ev.ch, ev.prog);
+    }
+    else if(ev.type==='cc') handleCC(ev.ch, ev.ctrl, ev.val);
+    else if(ev.type==='tempo') {
+      const bpm = Math.round(60e6/ev.usPerBeat);
+      document.getElementById('tempo-display').textContent = `${bpm} BPM`;
+    }
+    else if(ev.type==='endOfTrack' && eventIdx>=events.length) {
+      if(loopEnabled) { setTimeout(()=>play(0), 300); return; }
+      else { setTimeout(stop, 300); return; }
+    }
+  }
+
+  if(eventIdx >= events.length) {
+    if(loopEnabled) { setTimeout(()=>play(0), 500); return; }
+    else { setTimeout(stop, 1000); return; }
+  }
+
+  rafId = requestAnimationFrame(scheduleLoop);
+  updateUI();
+}
+
+// Scheduled note on/off using audioCtx time
+function schedNoteOn(ch, note, vel, when) {
+  channelActive[ch]=true; channelVU[ch]=Math.min(1,vel/127);
+  const ctx = getAudioCtx();
+  const { gain: chGain } = getChannelNodes(ch);
+  const key = `${ch}-${note}`;
+  schedNoteOff(ch, note, when);
+
+  const velocity = vel/127;
+  if(useOscFallback || (Object.keys(wafBuffers).length===0 && Object.keys(soundfontData).length===0)) {
+    const freq = 440*Math.pow(2,(note-69)/12);
+    const osc  = ctx.createOscillator();
+    const env  = ctx.createGain();
+    osc.type='sine'; osc.frequency.value=freq;
+    env.gain.setValueAtTime(0, when);
+    env.gain.linearRampToValueAtTime(velocity*0.4, when+0.01);
+    osc.connect(env); env.connect(chGain);
+    osc.start(when);
+    activeNotes[key]={source:osc,gain:env,type:'osc'};
+  } else {
+    // Async SF2/WAF play – we have to start immediately
+    noteOn(ch, note, vel);
+  }
+}
+
+function schedNoteOff(ch, note, when) {
+  const key=`${ch}-${note}`;
+  const n=activeNotes[key]; if(!n) return;
+  try {
+    n.gain.gain.setTargetAtTime(0, when||getAudioCtx().currentTime, 0.05);
+    n.source.stop((when||getAudioCtx().currentTime)+0.3);
+  } catch(e){}
+  delete activeNotes[key];
+}
+
+function handleCC(ch, ctrl, val) {
+  if(ctrl===7)  { channelVol[ch]=val; mixerChannels[ch].vol.value=val; mixerChannels[ch].volVal.textContent=val; applyChannelVol(ch); }
+  if(ctrl===10) { channelPanVal[ch]=val; mixerChannels[ch].pan.value=val; applyChannelPan(ch); }
+  if(ctrl===11) { /* expression */ }
+  if(ctrl===120||ctrl===123) { allNotesOff(); }
+}
+
+function updateUI() {
+  const tick = currentTick();
+  const sec  = ticksToSeconds(tick, tempoMap, tpqn);
+  const pct  = totalSec>0 ? Math.min(100, (sec/totalSec)*100) : 0;
+  updateProgress(pct);
+  document.getElementById('time-cur').textContent = fmtTime(sec);
+  // VU decay
+  for(let i=0;i<16;i++) {
+    channelVU[i] = Math.max(0, channelVU[i]-0.04);
+    const bar = mixerChannels[i].vuBar;
+    bar.style.height = (channelVU[i]*100)+'%';
+  }
+}
+
+/* ── 8. UI Helpers ──────────────────────────────────────────────── */
+function setSfStatus(state, text) {
+  const dot  = document.getElementById('sf-dot');
+  const span = document.getElementById('sf-status-text');
+  dot.className = 'dot '+state;
+  span.textContent = text;
+}
+
+function log(msg, cls='') {
+  const el  = document.getElementById('status-log');
+  const div = document.createElement('div');
+  if(cls) div.className=cls;
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(div);
+  el.scrollTop = el.scrollHeight;
+}
+
+function fmtTime(s) {
+  const m=Math.floor(s/60), ss=Math.floor(s%60);
+  return `${m}:${ss.toString().padStart(2,'0')}`;
+}
+
+function updateProgress(pct) {
+  document.getElementById('progress-fill').style.width = pct+'%';
+  const pw = document.getElementById('progress-wrap');
+  pw.setAttribute('aria-valuenow', Math.round(pct));
+}
+
+function updateButtons() {
+  const btnPlay  = document.getElementById('btn-play');
+  const btnPause = document.getElementById('btn-pause');
+  const btnStop  = document.getElementById('btn-stop');
+  const hasMidi  = !!midi;
+  btnPlay.disabled  = !hasMidi || !sfLoaded || playing;
+  btnPause.disabled = !hasMidi || (!playing && !paused);
+  btnStop.disabled  = !hasMidi || (!playing && !paused);
+  btnPlay.innerHTML = '▶ PLAY';
+  btnPause.innerHTML= paused ? '▶ RESUME' : '⏸ PAUSE';
+}
+
+function updateChannelName(ch, prog) {
+  const name = ch===9 ? 'Drums' : (GM_INSTRUMENTS[prog] || `Prog ${prog}`);
+  mixerChannels[ch].name.textContent = name;
+  const strip = mixerChannels[ch].strip;
+  strip.classList.toggle('drum', ch===9);
+}
+
+function updateMixerState() {
+  for(let i=0;i<16;i++) {
+    mixerChannels[i].vuBar.style.height='0%';
+    mixerChannels[i].strip.classList.remove('active');
+  }
+}
+
+/* ── 9. Mixer aufbauen ──────────────────────────────────────────── */
+const mixerChannels = [];
+
+function buildMixer() {
+  const grid = document.getElementById('mixer-grid');
+  grid.innerHTML='';
+  for(let i=0;i<16;i++) {
+    const ch    = i;
+    const strip = document.createElement('div');
+    strip.className = 'channel-strip' + (ch===9?' drum':'');
+    strip.setAttribute('role','listitem');
+    strip.setAttribute('aria-label', `Kanal ${i+1}`);
+
+    // Ch number
+    const num = document.createElement('div');
+    num.className='ch-num'; num.textContent=`CH ${i+1}`;
+    num.setAttribute('aria-hidden','true');
+
+    // Name
+    const name = document.createElement('div');
+    name.className='ch-name';
+    name.textContent = i===9 ? 'Drums' : 'Piano';
+
+    // VU
+    const vuWrap = document.createElement('div');
+    vuWrap.className='vu-wrap'; vuWrap.setAttribute('aria-hidden','true');
+    const vuL = document.createElement('div'); vuL.className='vu-bar';
+    const vuR = document.createElement('div'); vuR.className='vu-bar';
+    vuWrap.appendChild(vuL); vuWrap.appendChild(vuR);
+
+    // Volume
+    const volSlider = document.createElement('input');
+    volSlider.type='range'; volSlider.min=0; volSlider.max=127; volSlider.value=100;
+    volSlider.className='vol-slider';
+    volSlider.setAttribute('aria-label',`Kanal ${i+1} Lautstärke`);
+    volSlider.addEventListener('input',()=>{
+      channelVol[ch]=+volSlider.value;
+      volVal.textContent=volSlider.value;
+      applyChannelVol(ch);
+    });
+
+    const volVal = document.createElement('div');
+    volVal.className='vol-val'; volVal.textContent='100';
+    volVal.setAttribute('aria-hidden','true');
+
+    // Pan
+    const panRow   = document.createElement('div'); panRow.className='pan-row';
+    const panLbl   = document.createElement('div'); panLbl.className='pan-label'; panLbl.textContent='L'; panLbl.setAttribute('aria-hidden','true');
+    const panSlider= document.createElement('input');
+    panSlider.type='range'; panSlider.min=0; panSlider.max=127; panSlider.value=64;
+    panSlider.className='pan-slider';
+    panSlider.setAttribute('aria-label',`Kanal ${i+1} Panorama`);
+    const panRbl   = document.createElement('div'); panRbl.className='pan-label'; panRbl.textContent='R'; panRbl.setAttribute('aria-hidden','true');
+    panSlider.addEventListener('input',()=>{ channelPanVal[ch]=+panSlider.value; applyChannelPan(ch); });
+    panRow.appendChild(panLbl); panRow.appendChild(panSlider); panRow.appendChild(panRbl);
+
+    // Mute / Solo
+    const msRow  = document.createElement('div'); msRow.className='ms-row';
+    const muteBtn= document.createElement('button');
+    muteBtn.className='ms-btn'; muteBtn.textContent='M';
+    muteBtn.setAttribute('aria-label',`Kanal ${i+1} stummschalten`);
+    muteBtn.setAttribute('aria-pressed','false');
+    muteBtn.addEventListener('click',()=>{
+      channelMuted[ch]=!channelMuted[ch];
+      muteBtn.classList.toggle('muted',channelMuted[ch]);
+      muteBtn.setAttribute('aria-pressed',channelMuted[ch]);
+      applyChannelVol(ch);
+    });
+    const soloBtn= document.createElement('button');
+    soloBtn.className='ms-btn'; soloBtn.textContent='S';
+    soloBtn.setAttribute('aria-label',`Kanal ${i+1} solo`);
+    soloBtn.setAttribute('aria-pressed','false');
+    soloBtn.addEventListener('click',()=>{
+      channelSolo[ch]=!channelSolo[ch];
+      soloBtn.classList.toggle('soloed',channelSolo[ch]);
+      soloBtn.setAttribute('aria-pressed',channelSolo[ch]);
+      // Apply solo logic
+      const anySolo = channelSolo.some(Boolean);
+      for(let j=0;j<16;j++) {
+        if(!channelMuted[j]) {
+          const g = channelGains[j];
+          if(g) g.gain.setTargetAtTime(
+            anySolo ? (channelSolo[j]?channelVol[j]/127:0) : channelVol[j]/127,
+            getAudioCtx().currentTime, 0.02
+          );
+        }
+      }
+    });
+    msRow.appendChild(muteBtn); msRow.appendChild(soloBtn);
+
+    strip.appendChild(num);
+    strip.appendChild(name);
+    strip.appendChild(vuWrap);
+    strip.appendChild(volSlider);
+    strip.appendChild(volVal);
+    strip.appendChild(panRow);
+    strip.appendChild(msRow);
+    grid.appendChild(strip);
+
+    mixerChannels.push({ strip, name, vuBar: vuL, vuBar2: vuR, vol: volSlider, volVal, pan: panSlider, muteBtn, soloBtn });
+  }
+}
+
+/* ── 10. Soundfont-Liste vom Server laden ───────────────────────── */
+async function loadSoundfontList() {
+  const sel = document.getElementById('sf-select');
+  try {
+    // Try to fetch the directory listing from /soundfonts/
+    const resp = await fetch('/soundfonts/');
+    let files = [];
+
+    if(resp.ok) {
+      const html  = await resp.text();
+      // Parse Apache/Nginx-style directory listing
+      const matches = [...html.matchAll(/href="([^"?#]+\.(sf2|js|sf3))"/gi)];
+      files = matches.map(m => m[1]);
+    }
+
+    if(files.length===0) {
+      // Fallback: try manifest.json in /soundfonts/
+      try {
+        const mResp = await fetch('/soundfonts/manifest.json');
+        if(mResp.ok) {
+          const mData = await mResp.json();
+          files = mData.soundfonts || mData.files || [];
+        }
+      } catch(e){}
+    }
+
+    if(files.length===0) {
+      // Try common default names
+      const defaults = ['GeneralUser.sf2','TimGM6mb.sf2','FluidR3_GM.sf2','MuseScore_General.sf2'];
+      for(const f of defaults) {
+        try {
+          const r = await fetch(`/soundfonts/${f}`, {method:'HEAD'});
+          if(r.ok) files.push(f);
+        } catch(e){}
+      }
+    }
+
+    sel.innerHTML='';
+    if(files.length===0) {
+      sel.innerHTML='<option value="">Keine Soundfonts gefunden</option>';
+      log('Keine Soundfont-Dateien unter /soundfonts/ gefunden. Oscillator-Fallback wird verwendet.','err');
+      useOscFallback=true; sfLoaded=true;
+      setSfStatus('error','Kein Soundfont – Oscillator-Fallback');
+      updateButtons();
+      return;
+    }
+
+    for(const f of files) {
+      const opt = document.createElement('option');
+      const name = f.split('/').pop();
+      opt.value = `/soundfonts/${name}`;
+      opt.textContent = name;
+      sel.appendChild(opt);
+    }
+    log(`${files.length} Soundfont(s) gefunden.`, 'ok');
+    // Auto-load first
+    loadSoundfont(sel.value);
+  } catch(err) {
+    sel.innerHTML='<option value="">Fehler beim Laden</option>';
+    log(`Soundfont-Verzeichnis nicht erreichbar: ${err.message} – Fallback aktiv`, 'err');
+    useOscFallback=true; sfLoaded=true;
+    setSfStatus('error','Fallback-Synth aktiv');
+    updateButtons();
+  }
+}
+
+/* ── 11. Event-Listener ─────────────────────────────────────────── */
+// File input
+document.getElementById('midi-file').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(file) loadMidiFile(file);
+});
+
+// Drag & drop
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e=>{ e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e=>{
+  e.preventDefault(); dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if(file && file.name.match(/\.midi?$/i)) loadMidiFile(file);
+  else log('Bitte eine gültige MIDI-Datei (.mid/.midi) verwenden.','err');
+});
+dropZone.addEventListener('keydown', e=>{
+  if(e.key==='Enter'||e.key===' ') { e.preventDefault(); document.getElementById('midi-file').click(); }
+});
+
+function loadMidiFile(file) {
+  stop();
+  document.getElementById('file-name').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parser  = new MidiParser(e.target.result);
+      midi          = parser.parse();
+      tpqn          = midi.header.ticksPerBeat;
+      events        = mergeTracks(midi);
+      tempoMap      = buildTempoMap(events);
+      totalSec      = calcDuration(events, tpqn);
+      document.getElementById('time-tot').textContent = fmtTime(totalSec);
+      // Detect initial tempo
+      const firstTempo = tempoMap.find(t=>t.usPerBeat);
+      if(firstTempo) {
+        const bpm = Math.round(60e6/firstTempo.usPerBeat);
+        document.getElementById('tempo-display').textContent=`${bpm} BPM`;
+      }
+      // Reset channel programs
+      for(let i=0;i<16;i++) { channelProg[i]=0; updateChannelName(i,0); }
+      channelProg[9]=128; updateChannelName(9,128);
+      log(`${file.name} geladen — Format ${midi.header.format}, ${midi.header.numTracks} Track(s), ${fmtTime(totalSec)} Länge`, 'ok');
+      updateButtons();
+    } catch(err) {
+      log(`MIDI-Fehler: ${err.message}`, 'err');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Transport buttons
+document.getElementById('btn-play').addEventListener('click',  ()=>play(paused?pauseTick:0));
+document.getElementById('btn-pause').addEventListener('click', ()=>pause());
+document.getElementById('btn-stop').addEventListener('click',  ()=>stop());
+
+// Progress click
+document.getElementById('progress-wrap').addEventListener('click', e=>{
+  if(!midi) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct  = (e.clientX-rect.left)/rect.width;
+  const targetSec = pct*totalSec;
+  // Convert target seconds to tick
+  let sec=0,prevTick=0,prevTempo=500000;
+  for(const tm of tempoMap) {
+    const seg=(tm.tick-prevTick)*(prevTempo/1e6)/tpqn;
+    if(sec+seg>=targetSec) break;
+    sec+=seg; prevTick=tm.tick; prevTempo=tm.usPerBeat;
+  }
+  const targetTick=prevTick+(targetSec-sec)*tpqn/(prevTempo/1e6);
+  if(playing) play(targetTick);
+  else { pauseTick=targetTick; updateProgress(pct*100); document.getElementById('time-cur').textContent=fmtTime(targetSec); }
+});
+document.getElementById('progress-wrap').addEventListener('keydown', e=>{
+  if(!midi) return;
+  const step=5;
+  if(e.key==='ArrowRight') { const t=Math.min(totalSec, ticksToSeconds(currentTick(),tempoMap,tpqn)+step); if(playing) play(currentTick()+step*tpqn); }
+  if(e.key==='ArrowLeft')  { const t=Math.max(0, ticksToSeconds(currentTick(),tempoMap,tpqn)-step); if(playing) play(Math.max(0,currentTick()-step*tpqn)); }
+});
+
+// Soundfont select
+document.getElementById('sf-select').addEventListener('change', e=>{
+  if(e.target.value) { const wasPlaying=playing; stop(); loadSoundfont(e.target.value).then(()=>{ if(wasPlaying&&midi) play(0); }); }
+});
+
+// Loop
+const loopCb    = document.getElementById('loop-cb');
+const loopLabel = document.getElementById('loop-label');
+loopCb.addEventListener('change', ()=>{
+  loopEnabled=loopCb.checked;
+  loopLabel.classList.toggle('active',loopEnabled);
+});
+
+/* ── 12. VU-Meter Animation ─────────────────────────────────────── */
+function vuLoop() {
+  for(let i=0;i<16;i++) {
+    if(!playing) { channelVU[i]=Math.max(0,channelVU[i]-0.06); }
+    const h=channelVU[i]*100;
+    if(mixerChannels[i]) {
+      mixerChannels[i].vuBar.style.height=h+'%';
+      mixerChannels[i].vuBar2.style.height=h*0.7+'%';
+      mixerChannels[i].strip.classList.toggle('active',h>5);
+    }
+  }
+  requestAnimationFrame(vuLoop);
+}
+
+/* ── 13. Init ───────────────────────────────────────────────────── */
+buildMixer();
+loadSoundfontList();
+updateButtons();
+vuLoop();
+log('GM MIDI Player bereit.','info');
+</script>
+</body>
+</html>
