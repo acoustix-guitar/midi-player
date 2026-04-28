@@ -420,114 +420,314 @@ function parseSF2(buf){
   log(`SF2: ${samples.length} Samples verarbeitet`,'info');
 }
 
-/* ── Note spielen ────────────────────────────────────────────────── */
-const activeNotes={};
-function noteOn(ch,note,vel){
-  const ctx=getCtx(),gn=getNodes(ch),key=`${ch}-${note}`,v01=vel/127;
-  noteOff(ch,note);chVU[ch]=Math.min(1,vel/127);
-  if(useOscFb||(!Object.keys(wafBufs).length&&!Object.keys(sf2Data).length)){playOsc(ch,note,v01,gn,ctx,key);return;}
-  if(Object.keys(wafBufs).length)playWAF(ch,note,v01,gn,ctx,key);else playSF2(ch,note,v01,gn,ctx,key);
+/* ================================================================
+   PLAYBACK ENGINE — Web Audio API lookahead scheduler
+   Alle Noten werden mit präzisem AudioContext-Zeitstempel geplant.
+   SF2/WAF-Buffer werden vorab dekodiert (preloadBuffers) damit
+   src.start(when) exakt greift – kein async-Timing-Drift.
+   ================================================================ */
+
+/* ── AudioBuffer-Cache: prog → note → AudioBuffer ──────────────── */
+const bufCache = {};   // bufCache[prog][note] = AudioBuffer (decoded)
+let   preloading = false;
+
+/* SF2: Alle Samples vorab dekodieren */
+async function preloadSF2Buffers() {
+  const ctx = getCtx();
+  for (const prog of Object.keys(sf2Data)) {
+    if (!bufCache[prog]) bufCache[prog] = {};
+    for (const note of Object.keys(sf2Data[prog])) {
+      if (bufCache[prog][note]) continue;
+      bufCache[prog][note] = sf2Data[prog][note].buffer; // already AudioBuffer
+    }
+  }
 }
-async function playWAF(ch,note,v01,gn,ctx,key){
-  const prog=ch===9?128:(chProg[ch]||0);
-  const bank=wafBufs[prog]||wafBufs[Object.keys(wafBufs)[0]];
-  if(!bank){playOsc(ch,note,v01,gn,ctx,key);return;}
-  let zd=bank[note];
-  if(!zd){let c=null,m=999;for(const n of Object.keys(bank)){const d=Math.abs(n-note);if(d<m){m=d;c=n;}}zd=bank[c];}
-  if(!zd){playOsc(ch,note,v01,gn,ctx,key);return;}
-  if(!zd._abuf)try{zd._abuf=await ctx.decodeAudioData(zd.encoded.slice(0));}catch(e){playOsc(ch,note,v01,gn,ctx,key);return;}
-  const src=ctx.createBufferSource(),env=ctx.createGain();
-  src.buffer=zd._abuf;const z=zd.zone;
-  src.playbackRate.value=Math.pow(2,(note-z.midi)/12);
-  env.gain.setValueAtTime(v01*(z.gain||1),ctx.currentTime);
-  if(z.loopStart&&z.loopEnd){src.loop=true;src.loopStart=z.loopStart/ctx.sampleRate;src.loopEnd=z.loopEnd/ctx.sampleRate;}
-  src.connect(env);env.connect(gn);src.start();activeNotes[key]={source:src,gain:env};
+
+/* WAF: Alle base64-Samples vorab dekodieren */
+async function preloadWAFBuffers() {
+  const ctx = getCtx();
+  const jobs = [];
+  for (const prog of Object.keys(wafBufs)) {
+    if (!bufCache[prog]) bufCache[prog] = {};
+    for (const note of Object.keys(wafBufs[prog])) {
+      if (bufCache[prog][note]) continue;
+      const zd = wafBufs[prog][note];
+      jobs.push(
+        ctx.decodeAudioData(zd.encoded.slice(0))
+          .then(ab => { bufCache[prog][note] = ab; zd._abuf = ab; })
+          .catch(() => {})
+      );
+    }
+  }
+  if (jobs.length) {
+    log(`Dekodiere ${jobs.length} WAF-Samples …`, 'info');
+    await Promise.all(jobs);
+    log('WAF-Samples dekodiert', 'ok');
+  }
 }
-function playSF2(ch,note,v01,gn,ctx,key){
-  const bank=sf2Data[chProg[ch]||0]||sf2Data[0];if(!bank){playOsc(ch,note,v01,gn,ctx,key);return;}
-  let sd=bank[note];if(!sd){let c=null,m=999;for(const n of Object.keys(bank)){const d=Math.abs(n-note);if(d<m){m=d;c=n;}}sd=bank[c];}
-  if(!sd){playOsc(ch,note,v01,gn,ctx,key);return;}
-  const src=ctx.createBufferSource(),env=ctx.createGain();
-  src.buffer=sd.buffer;src.playbackRate.value=Math.pow(2,(note-sd.origPitch)/12);
-  env.gain.setValueAtTime(v01,ctx.currentTime);src.connect(env);env.connect(gn);src.start();
-  activeNotes[key]={source:src,gain:env};
+
+/* Passenden AudioBuffer für Instrument/Note finden */
+function findBuffer(prog, note) {
+  // Exakt oder nächste Note im selben Programm
+  let bank = bufCache[prog];
+  if (!bank) bank = bufCache[0];         // Fallback auf Prog 0
+  if (!bank) return null;
+  if (bank[note]) return { buf: bank[note], origNote: +note };
+  // Nächste Note
+  let closest = null, minDist = 999;
+  for (const n of Object.keys(bank)) {
+    const d = Math.abs(n - note);
+    if (d < minDist) { minDist = d; closest = n; }
+  }
+  return closest !== null ? { buf: bank[closest], origNote: +closest } : null;
 }
-function playOsc(ch,note,v01,gn,ctx,key){
-  const osc=ctx.createOscillator(),env=ctx.createGain();
-  osc.type=ch===9?'square':'sine';osc.frequency.value=440*Math.pow(2,(note-69)/12);
-  env.gain.setValueAtTime(0,ctx.currentTime);env.gain.linearRampToValueAtTime(v01*0.4,ctx.currentTime+0.01);
-  osc.connect(env);env.connect(gn);osc.start();activeNotes[key]={source:osc,gain:env};
+
+/* ── Aktive Noten: key → { src, gain, stopTime } ────────────────── */
+const activeNotes = {};
+
+/* Haupt-NoteOn: plant Note mit präzisem Web-Audio-Zeitstempel */
+function schedNoteOn(ch, note, vel, when) {
+  const ctx = getCtx();
+  const gn  = getNodes(ch);
+  const key = `${ch}-${note}`;
+  schedNoteOff(ch, note, when);        // laufende Note erst sauber stoppen
+  chVU[ch] = Math.min(1, vel / 127);
+
+  const v01 = vel / 127;
+  const prog = ch === 9 ? 128 : (chProg[ch] || 0);
+
+  /* ── SF2 / WAF ── */
+  if (!useOscFb) {
+    const found = findBuffer(prog, note);
+    if (found) {
+      const src = ctx.createBufferSource();
+      const env = ctx.createGain();
+      src.buffer = found.buf;
+
+      // Pitch-Verschiebung relativ zum Original-Pitch des Samples
+      let origNote = found.origNote;
+      // Für WAF: origNote ist der MIDI-Key der Zone
+      src.playbackRate.value = Math.pow(2, (note - origNote) / 12);
+
+      // Velocity-Envelope
+      env.gain.setValueAtTime(0, when);
+      env.gain.linearRampToValueAtTime(v01 * 0.9, when + 0.008);
+
+      src.connect(env);
+      env.connect(gn);
+      src.start(when);
+      activeNotes[key] = { source: src, gain: env };
+      return;
+    }
+  }
+
+  /* ── Oscillator-Fallback ── */
+  const freq = 440 * Math.pow(2, (note - 69) / 12);
+  const osc  = ctx.createOscillator();
+  const env  = ctx.createGain();
+  // GM-Channel 9 = Percussion: kurze Geräusch-Wellenform
+  osc.type = ch === 9 ? 'square' : 'triangle';
+  // Bessere GM-Approximation nach Instrument-Familie
+  if (ch !== 9) {
+    const p = chProg[ch] || 0;
+    if (p < 8)        osc.type = 'triangle';   // Piano
+    else if (p < 16)  osc.type = 'sine';        // Chromatic Perc
+    else if (p < 24)  osc.type = 'sine';        // Organ
+    else if (p < 32)  osc.type = 'triangle';   // Guitar
+    else if (p < 40)  osc.type = 'sawtooth';   // Bass
+    else if (p < 48)  osc.type = 'sawtooth';   // Strings
+    else if (p < 56)  osc.type = 'sine';        // Ensemble
+    else if (p < 64)  osc.type = 'sawtooth';   // Brass
+    else if (p < 72)  osc.type = 'sawtooth';   // Reed
+    else if (p < 80)  osc.type = 'sine';        // Pipe
+    else if (p < 88)  osc.type = 'square';     // Synth Lead
+    else if (p < 96)  osc.type = 'sine';        // Synth Pad
+    else              osc.type = 'sawtooth';
+  }
+  osc.frequency.value = freq;
+  env.gain.setValueAtTime(0, when);
+  env.gain.linearRampToValueAtTime(v01 * 0.35, when + 0.01);
+  env.gain.setTargetAtTime(v01 * 0.25, when + 0.01, 0.15);
+  osc.connect(env); env.connect(gn);
+  osc.start(when);
+  activeNotes[key] = { source: osc, gain: env };
 }
-function noteOff(ch,note){
-  const key=`${ch}-${note}`,n=activeNotes[key];if(!n)return;
-  const t=getCtx().currentTime;
-  try{n.gain.gain.cancelScheduledValues(t);n.gain.gain.setTargetAtTime(0,t,0.05);n.source.stop(t+0.3);}catch(e){}
+
+function schedNoteOff(ch, note, when) {
+  const key = `${ch}-${note}`;
+  const n   = activeNotes[key];
+  if (!n) return;
+  const t = when || getCtx().currentTime;
+  try {
+    n.gain.gain.cancelScheduledValues(t);
+    n.gain.gain.setTargetAtTime(0, t, 0.04);
+    n.source.stop(t + 0.25);
+  } catch(e) {}
   delete activeNotes[key];
 }
-function allOff(){for(const k of Object.keys(activeNotes)){const n=activeNotes[k];try{n.gain.gain.setTargetAtTime(0,getCtx().currentTime,0.02);n.source.stop(getCtx().currentTime+0.15);}catch(e){}delete activeNotes[k];}}
 
-/* ── Playback ────────────────────────────────────────────────────── */
-let midi=null,events=[],tempoMap=[],tpqn=480,totalSec=0;
-let playing=false,paused=false,pauseTick=0,startTime=0,eventIdx=0,rafId=null,loopEnabled=false;
-
-function play(fromTick=0){
-  if(!midi||!sfLoaded)return;
-  allOff();playing=true;paused=false;
-  eventIdx=events.findIndex(e=>e.tick>=fromTick);if(eventIdx<0)eventIdx=events.length;
-  startTime=getCtx().currentTime-ticksToSec(fromTick,tempoMap,tpqn);
-  schedLoop();updateButtons();
+function allOff() {
+  const ctx = getCtx();
+  for (const key of Object.keys(activeNotes)) {
+    const n = activeNotes[key];
+    try { n.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.01); n.source.stop(ctx.currentTime + 0.1); } catch(e) {}
+    delete activeNotes[key];
+  }
 }
-function pause(){
-  if(!playing&&!paused)return;
-  if(!paused){paused=true;pauseTick=curTick();playing=false;allOff();cancelAnimationFrame(rafId);}
-  else{play(pauseTick);}
+
+/* ── Playback-State ──────────────────────────────────────────────── */
+let midi=null, events=[], tempoMap=[], tpqn=480, totalSec=0;
+let playing=false, paused=false, pauseTick=0;
+let startAudioTime=0, startMidiTick=0, eventIdx=0;
+let schedTimerId=null, rafId=null, loopEnabled=false;
+
+/* Aktuelle Wiedergabeposition in Ticks */
+function curTick() {
+  if (!playing) return pauseTick;
+  const elapsed = getCtx().currentTime - startAudioTime;
+  // Tempo-Map: elapsed Seconds → Ticks
+  let sec=0, pt=0, pT=500000;
+  for (const tm of tempoMap) {
+    const seg = (tm.tick - pt) * (pT / 1e6) / tpqn;
+    if (sec + seg >= elapsed) break;
+    sec += seg; pt = tm.tick; pT = tm.usPerBeat;
+  }
+  return pt + (elapsed - sec) * tpqn / (pT / 1e6);
+}
+
+/* Sekunden-Offset ab startMidiTick für einen gegebenen Tick */
+function tickToAudio(tick) {
+  return startAudioTime + ticksToSec(tick, tempoMap, tpqn) - ticksToSec(startMidiTick, tempoMap, tpqn);
+}
+
+async function play(fromTick = 0) {
+  if (!midi || !sfLoaded) return;
+  allOff();
+  cancelAnimationFrame(rafId);
+  clearTimeout(schedTimerId);
+
+  // Puffer vorab dekodieren (nur beim ersten Mal)
+  if (!preloading && Object.keys(bufCache).length === 0) {
+    preloading = true;
+    if (Object.keys(sf2Data).length)  await preloadSF2Buffers();
+    if (Object.keys(wafBufs).length)  await preloadWAFBuffers();
+  }
+
+  playing = true; paused = false;
+  startMidiTick = fromTick;
+  startAudioTime = getCtx().currentTime;
+
+  // Lese alle programChange-Events VOR fromTick, damit Instrumente stimmen
+  for (const ev of events) {
+    if (ev.tick > fromTick) break;
+    if (ev.type === 'programChange') { chProg[ev.ch] = ev.prog; updateChName(ev.ch, ev.prog); }
+    if (ev.type === 'cc') applyCC(ev.ch, ev.ctrl, ev.val);
+    if (ev.type === 'tempo') { /* tempoMap already built */ }
+  }
+
+  eventIdx = events.findIndex(e => e.tick >= fromTick);
+  if (eventIdx < 0) eventIdx = events.length;
+
+  scheduleAhead();
+  updateUI();       // start RAF display loop
   updateButtons();
 }
-function stop(){
-  playing=false;paused=false;allOff();cancelAnimationFrame(rafId);
-  for(let i=0;i<16;i++){chProg[i]=0;chVU[i]=0;}
-  updateProgress(0);document.getElementById('time-cur').textContent='0:00';
-  document.getElementById('tempo-display').textContent='120 BPM';
-  updateButtons();updateMixerNames();
-}
-function curTick(){
-  if(!playing)return pauseTick;
-  const el=getCtx().currentTime-startTime;
-  let s=0,pt=0,pT=500000;
-  for(const tm of tempoMap){const seg=(tm.tick-pt)*(pT/1e6)/tpqn;if(s+seg>=el)break;s+=seg;pt=tm.tick;pT=tm.usPerBeat;}
-  return pt+(el-s)*tpqn/(pT/1e6);
-}
-function schedLoop(){
-  if(!playing)return;
-  const ctx=getCtx(),now=ctx.currentTime,hor=now+0.15;
-  while(eventIdx<events.length){
-    const ev=events[eventIdx],evT=startTime+ticksToSec(ev.tick,tempoMap,tpqn);
-    if(evT>hor)break;
-    eventIdx++;const when=Math.max(now,evT);
-    if(ev.type==='noteOn')        noteOn(ev.ch,ev.note,ev.vel);
-    else if(ev.type==='noteOff')  noteOff(ev.ch,ev.note);
-    else if(ev.type==='programChange'){chProg[ev.ch]=ev.prog;updateChName(ev.ch,ev.prog);}
-    else if(ev.type==='cc')       handleCC(ev.ch,ev.ctrl,ev.val);
-    else if(ev.type==='tempo')    document.getElementById('tempo-display').textContent=Math.round(60e6/ev.usPerBeat)+' BPM';
-    else if(ev.type==='endOfTrack'&&eventIdx>=events.length){onEnd();return;}
+
+function pause() {
+  if (!playing && !paused) return;
+  if (!paused) {
+    paused = true; pauseTick = curTick(); playing = false;
+    allOff(); cancelAnimationFrame(rafId); clearTimeout(schedTimerId);
+  } else {
+    play(pauseTick);
   }
-  if(eventIdx>=events.length){onEnd();return;}
-  rafId=requestAnimationFrame(schedLoop);updateUI();
+  updateButtons();
 }
-function onEnd(){if(loopEnabled)setTimeout(()=>play(0),300);else setTimeout(stop,800);}
-function handleCC(ch,ctrl,val){
-  if(ctrl===7){chVol[ch]=val;if(mc[ch]){mc[ch].vol.value=val;mc[ch].volVal.textContent=val;}applyVol(ch);}
-  if(ctrl===10){chPanVal[ch]=val;if(mc[ch])mc[ch].pan.value=val;applyPan(ch);}
-  if(ctrl===120||ctrl===123)allOff();
+
+function stop() {
+  playing = false; paused = false;
+  allOff(); cancelAnimationFrame(rafId); clearTimeout(schedTimerId);
+  for (let i = 0; i < 16; i++) { chProg[i] = 0; chVU[i] = 0; }
+  updateProgress(0);
+  document.getElementById('time-cur').textContent = '0:00';
+  document.getElementById('tempo-display').textContent = '120 BPM';
+  updateButtons(); updateMixerNames();
 }
+
+/* Lookahead-Scheduler: plant Events 300ms voraus, läuft alle 100ms */
+const LOOKAHEAD_SEC = 0.3;
+const SCHED_INTERVAL_MS = 100;
+
+function scheduleAhead() {
+  if (!playing) return;
+  const ctx = getCtx();
+  const horizon = ctx.currentTime + LOOKAHEAD_SEC;
+
+  while (eventIdx < events.length) {
+    const ev  = events[eventIdx];
+    const evT = tickToAudio(ev.tick);
+    if (evT > horizon) break;
+    eventIdx++;
+
+    const when = Math.max(ctx.currentTime, evT);
+
+    switch (ev.type) {
+      case 'noteOn':
+        schedNoteOn(ev.ch, ev.note, ev.vel, when);
+        break;
+      case 'noteOff':
+        schedNoteOff(ev.ch, ev.note, when);
+        break;
+      case 'programChange':
+        // Sofort anwenden (für Mixer-Anzeige) und für zukünftige Noten merken
+        chProg[ev.ch] = ev.prog;
+        updateChName(ev.ch, ev.prog);
+        break;
+      case 'cc':
+        applyCC(ev.ch, ev.ctrl, ev.val);
+        break;
+      case 'tempo':
+        document.getElementById('tempo-display').textContent =
+          Math.round(60e6 / ev.usPerBeat) + ' BPM';
+        // Tempo-Änderung erfordert Neuberechnung der Audio-Zeitbasis
+        // startAudioTime und startMidiTick bleiben, tempoMap ist bereits bekannt
+        break;
+      case 'endOfTrack':
+        if (eventIdx >= events.length) { onEnd(); return; }
+        break;
+    }
+  }
+
+  if (eventIdx >= events.length) { onEnd(); return; }
+
+  schedTimerId = setTimeout(scheduleAhead, SCHED_INTERVAL_MS);
+  // UI update loop started separately in play()
+}
+
+function onEnd() {
+  if (loopEnabled) setTimeout(() => play(0), 300);
+  else setTimeout(stop, 800);
+}
+
+/* CC-Handler */
+function applyCC(ch, ctrl, val) {
+  if (ctrl === 7)  { chVol[ch]=val; if(mc[ch]){mc[ch].vol.value=val;mc[ch].volVal.textContent=val;} applyVol(ch); }
+  if (ctrl === 10) { chPanVal[ch]=val; if(mc[ch]) mc[ch].pan.value=val; applyPan(ch); }
+  if (ctrl === 11) { /* expression – optional: scale gain */ }
+  if (ctrl === 64) { /* sustain pedal – optional */ }
+  if (ctrl === 120 || ctrl === 123) allOff();
+}
+function handleCC(ch,ctrl,val){ applyCC(ch,ctrl,val); }
 function updateUI(){
-  const tick=curTick(),sec=ticksToSec(tick,tempoMap,tpqn);
+  if(!playing) return;
+  const tick=curTick(), sec=ticksToSec(tick,tempoMap,tpqn);
   updateProgress(totalSec>0?(sec/totalSec)*100:0);
   document.getElementById('time-cur').textContent=fmt(sec);
   for(let i=0;i<16;i++){
-    chVU[i]=Math.max(0,chVU[i]-0.035);
+    chVU[i]=Math.max(0,chVU[i]-0.03);
     if(mc[i]){mc[i].vuL.style.height=(chVU[i]*100)+'%';mc[i].vuR.style.height=(chVU[i]*75)+'%';}
   }
+  rafId=requestAnimationFrame(updateUI);
 }
 
 /* ── Hilfsfunktionen ─────────────────────────────────────────────── */
