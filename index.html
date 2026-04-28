@@ -188,6 +188,41 @@
       </div>
     </div>
   </div>
+  <!-- Pfad-Konfiguration -->
+  <details class="card" id="path-config" style="cursor:pointer">
+    <summary style="font-family:var(--font-mono);font-size:.78rem;letter-spacing:.1em;color:var(--text-dim);list-style:none;display:flex;align-items:center;gap:8px;user-select:none">
+      <span style="color:var(--accent)">⚙</span> PFAD-KONFIGURATION
+      <span style="margin-left:auto;font-size:.7em;color:var(--muted)">(aufklappen falls Dateien nicht gefunden werden)</span>
+    </summary>
+    <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <label for="sf-base-input">Soundfont-Ordner (relativ oder absolut)</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="sf-base-input" value="soundfonts/"
+                 style="flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:.84rem;outline:none"
+                 aria-label="Pfad zum Soundfont-Ordner"
+                 placeholder="z.B. soundfonts/ oder /assets/sf2/">
+          <button class="btn" onclick="loadSoundfontList()" style="padding:8px 12px;font-size:.8rem">↺ Neu laden</button>
+        </div>
+      </div>
+      <div>
+        <label for="midi-base-input">MIDI-Ordner (relativ oder absolut)</label>
+        <div style="display:flex;gap:8px">
+          <input type="text" id="midi-base-input" value="midifiles/"
+                 style="flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
+                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:.84rem;outline:none"
+                 aria-label="Pfad zum MIDI-Ordner"
+                 placeholder="z.B. midifiles/ oder /assets/midi/">
+          <button class="btn" onclick="loadMidiList()" style="padding:8px 12px;font-size:.8rem">↺ Neu laden</button>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:.75rem;color:var(--muted);font-family:var(--font-mono)">
+      Tipp: Auf GitHub Pages relative Pfade verwenden (z.B. <code style="color:var(--accent)">soundfonts/</code>). 
+      Jeder Ordner benötigt eine <code style="color:var(--accent)">manifest.json</code> mit <code style="color:var(--accent)">{"files":["name.sf2"]}</code>
+    </div>
+  </details>
   <!-- Transport -->
   <div class="card">
     <div class="card-title">Transport</div>
@@ -590,26 +625,41 @@ function parseDirectoryListing(html, exts){
 /* ── Soundfont-Liste ─────────────────────────────────────────────── */
 async function loadSoundfontList(){
   const sel=document.getElementById('sf-select');
+  const base=getBase('sf');
   let files=[];
-  // 1. Directory listing
+  log(`Suche Soundfonts in: ${base}manifest.json`,'info');
+  // 1. manifest.json (relativ, funktioniert auf GitHub Pages etc.)
   try{
-    const r=await fetch('/soundfonts/',{headers:{Accept:'text/html,*/*'}});
-    if(r.ok)files=parseDirectoryListing(await r.text(),['sf2','sf3','js']);
-  }catch(e){log(`/soundfonts/ fetch: ${e.message}`,'info');}
-  // 2. manifest.json
-  if(!files.length){try{const r=await fetch('/soundfonts/manifest.json');if(r.ok){const j=await r.json();files=(j.soundfonts||j.files||[]).map(f=>f.split('/').pop());}}catch(e){}}
-  // 3. Bekannte Dateinamen
+    const url=base+'manifest.json';
+    log(`Lade: ${url}`,'info');
+    const r=await fetch(url);
+    log(`manifest.json Status: ${r.status}`,'info');
+    if(r.ok){
+      const j=await r.json();
+      files=(j.soundfonts||j.files||j.sf||[]).map(f=>f.split('/').pop());
+      log(`manifest.json gelesen: ${JSON.stringify(files)}`,'ok');
+    }
+  }catch(e){log(`manifest.json Fehler: ${e.message}`,'err');}
+  // 2. Directory listing
+  if(!files.length){
+    try{
+      const r=await fetch(base,{headers:{Accept:'text/html,*/*'}});
+      log(`Verzeichnis-Status: ${r.status}`,'info');
+      if(r.ok)files=parseDirectoryListing(await r.text(),['sf2','sf3','js']);
+    }catch(e){log(`Verzeichnis-Fehler: ${e.message}`,'info');}
+  }
+  // 3. Bekannte Dateinamen per HEAD
   if(!files.length){
     const DEFAULTS=['GeneralUser GS v1.471.sf2','GeneralUser.sf2','TimGM6mb.sf2','FluidR3_GM.sf2','MuseScore_General.sf2','soundfont.sf2','default.sf2','gm.sf2'];
-    await Promise.all(DEFAULTS.map(async f=>{try{const r=await fetch(`/soundfonts/${encodeURIComponent(f)}`,{method:'HEAD'});if(r.ok)files.push(f);}catch(e){}}));
+    await Promise.all(DEFAULTS.map(async f=>{try{const r=await fetch(base+encodeURIComponent(f),{method:'HEAD'});if(r.ok)files.push(f);}catch(e){};}));
   }
   sel.innerHTML='';
   if(!files.length){
-    sel.innerHTML='<option value="">Keine Soundfonts in /soundfonts/</option>';
-    log('Keine Soundfonts gefunden → Oscillator-Synth','err');
+    sel.innerHTML='<option value="">Keine Soundfonts gefunden</option>';
+    log(`Keine Soundfonts unter "${base}" → Bitte Pfad prüfen!`,'err');
     useOscFb=true;sfLoaded=true;setSfStatus('error','Kein Soundfont – Synth-Fallback');updateButtons();return;
   }
-  files.forEach(f=>{const o=document.createElement('option');o.value=`/soundfonts/${encodeURIComponent(f)}`;o.textContent=f;sel.appendChild(o);});
+  files.forEach(f=>{const o=document.createElement('option');o.value=base+encodeURIComponent(f);o.textContent=f;sel.appendChild(o);});
   log(`${files.length} Soundfont(s) gefunden`,'ok');
   loadSoundfont(sel.value);
 }
@@ -617,17 +667,32 @@ async function loadSoundfontList(){
 /* ── MIDI-Bibliothek ─────────────────────────────────────────────── */
 let allMidiFiles=[];
 async function loadMidiList(){
+  const base=getBase('midi');
   let files=[];
-  // 1. Directory listing
+  log(`Suche MIDI-Dateien in: ${base}manifest.json`,'info');
+  // 1. manifest.json
   try{
-    const r=await fetch('/midifiles/',{headers:{Accept:'text/html,*/*'}});
-    if(r.ok)files=parseDirectoryListing(await r.text(),['mid','midi']);
-  }catch(e){log(`/midifiles/ fetch: ${e.message}`,'info');}
-  // 2. manifest.json
-  if(!files.length){try{const r=await fetch('/midifiles/manifest.json');if(r.ok){const j=await r.json();files=(j.midifiles||j.files||[]).map(f=>f.split('/').pop());}}catch(e){}}
+    const url=base+'manifest.json';
+    log(`Lade: ${url}`,'info');
+    const r=await fetch(url);
+    log(`MIDI manifest.json Status: ${r.status}`,'info');
+    if(r.ok){
+      const j=await r.json();
+      files=(j.midifiles||j.files||j.midi||[]).map(f=>f.split('/').pop());
+      log(`MIDI manifest.json: ${JSON.stringify(files)}`,'ok');
+    }
+  }catch(e){log(`MIDI manifest.json Fehler: ${e.message}`,'err');}
+  // 2. Directory listing
+  if(!files.length){
+    try{
+      const r=await fetch(base,{headers:{Accept:'text/html,*/*'}});
+      log(`MIDI Verzeichnis-Status: ${r.status}`,'info');
+      if(r.ok)files=parseDirectoryListing(await r.text(),['mid','midi']);
+    }catch(e){log(`MIDI Verzeichnis-Fehler: ${e.message}`,'info');}
+  }
   allMidiFiles=files;renderMidiList(files);
-  if(!files.length)log('Keine MIDI-Dateien in /midifiles/ gefunden','err');
-  else log(`${files.length} MIDI-Datei(en) in Bibliothek`,'ok');
+  if(!files.length)log(`Keine MIDI-Dateien unter "${base}" → Bitte Pfad prüfen!`,'err');
+  else log(`${files.length} MIDI-Datei(en) gefunden`,'ok');
 }
 function renderMidiList(files){
   const ul=document.getElementById('midi-list');
@@ -645,7 +710,7 @@ function renderMidiList(files){
 }
 async function fetchMidi(filename,li){
   try{
-    const r=await fetch(`/midifiles/${encodeURIComponent(filename)}`);
+    const r=await fetch(getBase('midi')+encodeURIComponent(filename));
     if(!r.ok)throw new Error(`HTTP ${r.status}`);
     document.querySelectorAll('#midi-list li').forEach(el=>el.classList.remove('active'));
     li.classList.add('active');
@@ -682,8 +747,18 @@ document.getElementById('progress-wrap').addEventListener('click',e=>{
 
 /* ── Init ────────────────────────────────────────────────────────── */
 buildMixer();updateButtons();vuLoop();
+// ── Basispfad-Ermittlung: relativ zur HTML-Datei ──────────────────
+// Ermittelt den Basispfad relativ zur aktuellen Seite.
+// Funktioniert auf GitHub Pages, Unterordner-Deployments etc.
+function getBase(type){
+  const sfInput  = document.getElementById('sf-base-input');
+  const midiInput= document.getElementById('midi-base-input');
+  if(type==='sf')  return sfInput  ? sfInput.value.trim().replace(/\/?$/,'/') : 'soundfonts/';
+  if(type==='midi')return midiInput? midiInput.value.trim().replace(/\/?$/,'/') : 'midifiles/';
+  return '';
+}
 loadSoundfontList();loadMidiList();
-log('GM MIDI Player bereit – /soundfonts/ und /midifiles/ werden abgefragt','info');
+log('GM MIDI Player bereit','info');
 </script>
 </body>
 </html>
