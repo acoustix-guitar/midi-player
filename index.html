@@ -5,141 +5,475 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>GM MIDI Player</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@400;600;700&display=swap');
+
+  /* ── Design-Tokens ─────────────────────────────────────────────────
+     Barrierefreiheit:
+     · Keine Schriftgröße unter 12px (0.75rem bei 16px Basis)
+     · Alle Texte: Kontrastverhältnis ≥ 4.5:1 gegen Hintergrund
+     · Keine reinen Grautöne für Texte – alle Farben gut sichtbar
+     · Focus-Indikatoren überall sichtbar
+  ────────────────────────────────────────────────────────────────── */
   :root {
-    --bg:#0d0f14;--surface:#161923;--panel:#1e2433;--border:#2a3147;
-    --accent:#00d4ff;--accent2:#ff6b35;--green:#39ff14;--yellow:#ffd700;
-    --muted:#4a5568;--text:#e2e8f0;--text-dim:#7b8fa8;--radius:6px;
-    --font-mono:'Share Tech Mono',monospace;--font-ui:'Barlow',sans-serif;
+    --bg:        #0d0f14;
+    --surface:   #161923;
+    --panel:     #1e2433;
+    --border:    #3a4460;
+    --accent:    #00d4ff;
+    --accent2:   #ff6b35;
+    --green:     #39ff14;
+    --yellow:    #ffd700;
+    --text:      #f0f4ff;       /* fast weiß – höchster Kontrast */
+    --text-sec:  #b8c8e8;       /* helles Blaugrau – ≥ 4.5:1 auf --surface */
+    --text-ui:   #c8d8f0;       /* UI-Labels – ≥ 4.5:1 auf --panel */
+    --radius:    6px;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-ui:   'Barlow', sans-serif;
+    --fz-base:   1rem;          /* 16px */
+    --fz-sm:     0.875rem;      /* 14px – Minimum für normale Texte */
+    --fz-xs:     0.75rem;       /* 12px – absolutes Minimum */
+    --fz-label:  0.8125rem;     /* 13px – Labels / Badges */
   }
-  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font-family:var(--font-ui);min-height:100vh;
-    display:flex;flex-direction:column;align-items:center;padding:24px 16px 48px;
-    background-image:radial-gradient(ellipse at 20% 0%,rgba(0,212,255,.07) 0%,transparent 60%),
-      radial-gradient(ellipse at 80% 100%,rgba(255,107,53,.05) 0%,transparent 60%);}
-  header{width:100%;max-width:1200px;display:flex;align-items:center;gap:16px;margin-bottom:28px}
-  .logo-icon{width:48px;height:48px;background:linear-gradient(135deg,var(--accent),var(--accent2));
-    border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0}
-  header h1{font-family:var(--font-mono);font-size:1.5rem;letter-spacing:.08em;color:var(--accent)}
-  header .sub{font-size:.8rem;color:var(--text-dim);letter-spacing:.12em;text-transform:uppercase}
-  .app{width:100%;max-width:1200px;display:flex;flex-direction:column;gap:16px}
-  .top-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
-  @media(max-width:900px){.top-row{grid-template-columns:1fr 1fr}}
-  @media(max-width:560px){.top-row{grid-template-columns:1fr}}
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px}
-  .card-title{font-family:var(--font-mono);font-size:.72rem;letter-spacing:.15em;text-transform:uppercase;
-    color:var(--text-dim);margin-bottom:16px;display:flex;align-items:center;gap:8px}
-  .card-title::before{content:'';display:inline-block;width:3px;height:12px;background:var(--accent);border-radius:2px}
-  .file-drop-zone{border:2px dashed var(--border);border-radius:var(--radius);padding:22px 16px;
-    text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative}
-  .file-drop-zone:hover,.file-drop-zone.dragover{border-color:var(--accent);background:rgba(0,212,255,.05)}
-  .file-drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
-  .drop-icon{font-size:1.8rem;margin-bottom:6px}
-  .drop-text{font-size:.88rem;color:var(--text-dim)}
-  .drop-hint{font-size:.72rem;color:var(--muted);margin-top:4px}
-  #file-name{margin-top:10px;font-family:var(--font-mono);font-size:.78rem;color:var(--accent);
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .search-input{width:100%;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
-    color:var(--text);padding:8px 10px;font-family:var(--font-ui);font-size:.84rem;margin-bottom:8px;
-    outline:none;transition:border-color .2s}
-  .search-input:focus{border-color:var(--accent)}
-  .search-input::placeholder{color:var(--muted)}
-  .midi-list{list-style:none;max-height:190px;overflow-y:auto;border:1px solid var(--border);
-    border-radius:var(--radius);background:var(--panel)}
-  .midi-list li{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:pointer;
-    font-size:.82rem;border-bottom:1px solid rgba(42,49,71,.6);transition:background .12s,color .12s;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .midi-list li:last-child{border-bottom:none}
-  .midi-list li:hover{background:rgba(0,212,255,.09);color:var(--accent)}
-  .midi-list li.active{background:rgba(0,212,255,.16);color:var(--accent);font-weight:600}
-  .midi-list-msg{padding:12px 10px;font-size:.78rem;color:var(--muted);font-family:var(--font-mono)}
-  label{display:block;font-size:.84rem;color:var(--text-dim);margin-bottom:6px}
-  select{width:100%;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
-    color:var(--text);padding:10px 32px 10px 12px;font-family:var(--font-ui);font-size:.9rem;cursor:pointer;
-    appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%234a5568' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat:no-repeat;background-position:right 12px center;outline:none;transition:border-color .2s}
-  select:hover,select:focus{border-color:var(--accent)}
-  select option{background:var(--panel)}
-  .sf-status{margin-top:8px;font-size:.78rem;display:flex;align-items:center;gap:6px}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;transition:background .3s}
-  .dot.loading{background:var(--yellow);animation:pulse 1s infinite}
-  .dot.ready{background:var(--green)}
-  .dot.error{background:var(--accent2)}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-  .transport{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .btn{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);
-    font-family:var(--font-mono);font-size:.85rem;padding:10px 18px;cursor:pointer;letter-spacing:.05em;
-    transition:background .15s,border-color .15s,color .15s;display:flex;align-items:center;gap:8px;white-space:nowrap}
-  .btn:hover{border-color:var(--accent);color:var(--accent)}
-  .btn:active{background:rgba(0,212,255,.1)}
-  .btn:disabled{opacity:.35;cursor:not-allowed;pointer-events:none}
-  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .btn-primary{background:var(--accent);border-color:var(--accent);color:#000;font-weight:700}
-  .btn-primary:hover{background:#00b8e0;border-color:#00b8e0;color:#000}
-  .btn-stop{border-color:var(--accent2);color:var(--accent2)}
-  .btn-stop:hover{background:rgba(255,107,53,.1)}
-  .progress-area{flex:1;min-width:200px}
-  .progress-bar-wrap{position:relative;height:6px;background:var(--panel);border-radius:3px;cursor:pointer;overflow:hidden}
-  .progress-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--accent2));
-    border-radius:3px;transition:width .25s linear;pointer-events:none}
-  .time-row{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:.75rem;
-    color:var(--text-dim);margin-top:5px}
-  .transport-extras{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:.85rem}
-  .tempo-display{font-family:var(--font-mono);background:var(--panel);border:1px solid var(--border);
-    border-radius:var(--radius);padding:8px 14px;color:var(--accent)}
-  .loop-toggle{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;
-    padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);
-    transition:border-color .15s,color .15s}
-  .loop-toggle input{display:none}
-  .loop-toggle.active{border-color:var(--accent2);color:var(--accent2)}
-  .loop-toggle:hover{border-color:var(--accent)}
-  .loop-toggle:focus-within{outline:2px solid var(--accent);outline-offset:2px}
-  .mixer-scroll{overflow-x:auto}
-  .mixer-grid{display:grid;grid-template-columns:repeat(16,minmax(62px,1fr));gap:8px;min-width:1040px}
-  .channel-strip{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
-    padding:10px 6px;display:flex;flex-direction:column;align-items:center;gap:8px;transition:border-color .2s}
-  .channel-strip.active{border-color:rgba(0,212,255,.4)}
-  .channel-strip.drum{border-color:rgba(255,107,53,.3)}
-  .ch-num{font-family:var(--font-mono);font-size:.65rem;color:var(--text-dim);letter-spacing:.05em}
-  .ch-name{font-size:.6rem;color:var(--text-dim);text-align:center;height:24px;display:flex;
-    align-items:center;justify-content:center;line-height:1.2;width:100%;overflow:hidden;word-break:break-word}
-  .vu-wrap{width:100%;height:56px;background:#0a0c10;border-radius:3px;overflow:hidden;
-    position:relative;display:flex;align-items:flex-end;gap:2px;padding:2px}
-  .vu-bar{flex:1;border-radius:2px 2px 0 0;
-    background:linear-gradient(to top,var(--green) 0%,var(--yellow) 75%,var(--accent2) 100%);height:0%;transition:height .05s ease-out}
-  .vol-slider{-webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
-    background:var(--border);cursor:pointer;outline:none}
-  .vol-slider::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
-    background:var(--accent);cursor:pointer;transition:transform .1s}
-  .vol-slider::-webkit-slider-thumb:hover{transform:scale(1.3)}
-  .vol-slider::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--accent);cursor:pointer;border:none}
-  .vol-slider:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
-  .pan-row{display:flex;align-items:center;gap:4px;width:100%}
-  .pan-label{font-size:.55rem;color:var(--muted);font-family:var(--font-mono)}
-  .pan-slider{-webkit-appearance:none;appearance:none;flex:1;height:3px;border-radius:2px;
-    background:var(--border);cursor:pointer;outline:none}
-  .pan-slider::-webkit-slider-thumb{-webkit-appearance:none;width:10px;height:10px;border-radius:50%;background:var(--accent2);cursor:pointer}
-  .pan-slider::-moz-range-thumb{width:10px;height:10px;border-radius:50%;background:var(--accent2);border:none}
-  .pan-slider:focus-visible{outline:2px solid var(--accent2);outline-offset:2px;border-radius:3px}
-  .ms-row{display:flex;gap:4px;width:100%}
-  .ms-btn{flex:1;font-family:var(--font-mono);font-size:.6rem;letter-spacing:.05em;padding:4px 2px;
-    border-radius:3px;border:1px solid var(--border);background:transparent;color:var(--muted);
-    cursor:pointer;text-align:center;transition:background .15s,color .15s,border-color .15s}
-  .ms-btn:hover{border-color:var(--accent);color:var(--accent)}
-  .ms-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .ms-btn.muted{background:rgba(255,107,53,.2);border-color:var(--accent2);color:var(--accent2)}
-  .ms-btn.soloed{background:rgba(255,215,0,.2);border-color:var(--yellow);color:var(--yellow)}
-  .vol-val{font-family:var(--font-mono);font-size:.6rem;color:var(--muted)}
-  #status-log{font-family:var(--font-mono);font-size:.75rem;color:var(--text-dim);background:var(--panel);
-    border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;max-height:80px;overflow-y:auto;line-height:1.7}
-  #status-log .err{color:var(--accent2)}
-  #status-log .ok{color:var(--green)}
-  #status-log .info{color:var(--accent)}
-  ::-webkit-scrollbar{width:6px;height:6px}
-  ::-webkit-scrollbar-track{background:var(--bg)}
-  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-  ::-webkit-scrollbar-thumb:hover{background:var(--muted)}
-  @media(max-width:480px){.transport{flex-direction:column;align-items:stretch}.transport-extras{justify-content:space-between}}
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: var(--fz-base);
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 16px 48px;
+    background-image:
+      radial-gradient(ellipse at 20% 0%,  rgba(0,212,255,.07) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 100%, rgba(255,107,53,.05) 0%, transparent 60%);
+  }
+
+  /* ── Header ───────────────────────────────────────────────────────── */
+  header {
+    width: 100%; max-width: 1200px;
+    display: flex; align-items: center; gap: 16px;
+    margin-bottom: 28px;
+  }
+  .logo-icon {
+    width: 52px; height: 52px; flex-shrink: 0;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem;
+  }
+  header h1 {
+    font-family: var(--font-mono);
+    font-size: 1.5rem;
+    letter-spacing: .08em;
+    color: var(--accent);
+  }
+  header .sub {
+    font-size: var(--fz-label);   /* 13px */
+    color: var(--text-sec);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  /* ── Layout ───────────────────────────────────────────────────────── */
+  .app { width: 100%; max-width: 1200px; display: flex; flex-direction: column; gap: 16px; }
+
+  .top-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media(max-width:900px){ .top-row { grid-template-columns: 1fr 1fr; } }
+  @media(max-width:560px){ .top-row { grid-template-columns: 1fr; } }
+
+  /* ── Card ─────────────────────────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px – Minimum */
+    letter-spacing: .15em;
+    text-transform: uppercase;
+    color: var(--text-sec);
+    font-weight: 700;
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title::before {
+    content: '';
+    display: inline-block;
+    width: 3px; height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  /* ── Drop Zone ────────────────────────────────────────────────────── */
+  .file-drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 22px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    position: relative;
+  }
+  .file-drop-zone:hover,
+  .file-drop-zone.dragover { border-color: var(--accent); background: rgba(0,212,255,.06); }
+  .file-drop-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+  }
+  .drop-icon  { font-size: 2rem; margin-bottom: 6px; }
+  .drop-text  { font-size: var(--fz-sm); color: var(--text); font-weight: 600; }
+  .drop-hint  { font-size: var(--fz-xs); color: var(--text-sec); margin-top: 4px; }
+  #file-name  {
+    margin-top: 10px;
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--accent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-weight: 700;
+  }
+
+  /* ── Suche + MIDI-Liste ───────────────────────────────────────────── */
+  .search-input {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 10px;
+    font-family: var(--font-ui);
+    font-size: var(--fz-sm);     /* 14px */
+    margin-bottom: 8px;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .search-input:focus         { border-color: var(--accent); }
+  .search-input::placeholder  { color: var(--text-sec); opacity: 1; }
+
+  .midi-list {
+    list-style: none;
+    max-height: 190px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+  }
+  .midi-list li {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: var(--fz-sm);     /* 14px */
+    color: var(--text);
+    border-bottom: 1px solid rgba(58,68,96,.5);
+    transition: background .12s, color .12s;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .midi-list li:last-child  { border-bottom: none; }
+  .midi-list li:hover       { background: rgba(0,212,255,.1); color: var(--accent); }
+  .midi-list li.active      { background: rgba(0,212,255,.18); color: var(--accent); font-weight: 700; }
+  .midi-list li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .midi-list-msg {
+    padding: 12px 10px;
+    font-size: var(--fz-sm);
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+  }
+
+  /* ── Labels + Select ──────────────────────────────────────────────── */
+  label {
+    display: block;
+    font-size: var(--fz-sm);     /* 14px */
+    color: var(--text-ui);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  select {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 10px 32px 10px 12px;
+    font-family: var(--font-ui);
+    font-size: var(--fz-sm);     /* 14px */
+    cursor: pointer; appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23b8c8e8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    outline: none;
+    transition: border-color .2s;
+  }
+  select:hover, select:focus { border-color: var(--accent); }
+  select option { background: var(--panel); color: var(--text); }
+  select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ── Soundfont-Status ─────────────────────────────────────────────── */
+  .sf-status {
+    margin-top: 10px;
+    font-size: var(--fz-sm);     /* 14px */
+    color: var(--text-ui);
+    display: flex; align-items: center; gap: 8px;
+    font-weight: 600;
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--border); flex-shrink: 0; transition: background .3s;
+  }
+  .dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+  .dot.ready   { background: var(--green); }
+  .dot.error   { background: var(--accent2); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ── Transport ────────────────────────────────────────────────────── */
+  .transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+  .btn {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: var(--fz-sm);     /* 14px */
+    font-weight: 700;
+    padding: 10px 18px;
+    cursor: pointer;
+    letter-spacing: .05em;
+    transition: background .15s, border-color .15s, color .15s;
+    display: flex; align-items: center; gap: 8px;
+    white-space: nowrap;
+  }
+  .btn:hover        { border-color: var(--accent); color: var(--accent); }
+  .btn:active       { background: rgba(0,212,255,.12); }
+  .btn:disabled     { opacity: .4; cursor: not-allowed; pointer-events: none; }
+  .btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  .btn-primary {
+    background: var(--accent); border-color: var(--accent);
+    color: #000; font-weight: 700;
+  }
+  .btn-primary:hover { background: #00b8e0; border-color: #00b8e0; color: #000; }
+
+  .btn-stop { border-color: var(--accent2); color: var(--accent2); }
+  .btn-stop:hover { background: rgba(255,107,53,.12); }
+
+  /* Progress */
+  .progress-area { flex: 1; min-width: 200px; }
+  .progress-bar-wrap {
+    position: relative; height: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer; overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 4px;
+    transition: width .25s linear;
+    pointer-events: none;
+  }
+  .progress-bar-wrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+  .time-row {
+    display: flex; justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text-sec);
+    font-weight: 700;
+    margin-top: 6px;
+  }
+
+  .transport-extras { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+
+  .tempo-display {
+    font-family: var(--font-mono);
+    font-size: var(--fz-sm);
+    font-weight: 700;
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    color: var(--accent);
+    letter-spacing: .05em;
+  }
+  .loop-toggle {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none;
+    font-size: var(--fz-sm);
+    font-weight: 700;
+    padding: 8px 14px;
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel);
+    color: var(--text);
+    transition: border-color .15s, color .15s;
+  }
+  .loop-toggle input { display: none; }
+  .loop-toggle.active { border-color: var(--accent2); color: var(--accent2); }
+  .loop-toggle:hover  { border-color: var(--accent); color: var(--accent); }
+  .loop-toggle:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+
+  /* ── Mixer ────────────────────────────────────────────────────────── */
+  .mixer-scroll { overflow-x: auto; }
+  .mixer-grid {
+    display: grid;
+    grid-template-columns: repeat(16, minmax(66px, 1fr));
+    gap: 8px; min-width: 1060px;
+  }
+  .channel-strip {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    transition: border-color .2s;
+  }
+  .channel-strip.active { border-color: rgba(0,212,255,.55); }
+  .channel-strip.drum   { border-color: rgba(255,107,53,.55); }
+
+  /* Kanal-Nummer */
+  .ch-num {
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text-sec);
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  /* Instrument-Name */
+  .ch-name {
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text);
+    font-weight: 600;
+    text-align: center;
+    min-height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    line-height: 1.2;
+    width: 100%;
+    overflow: hidden;
+    word-break: break-word;
+    hyphens: auto;
+  }
+
+  /* VU-Meter */
+  .vu-wrap {
+    width: 100%; height: 52px;
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: 3px; overflow: hidden;
+    display: flex; align-items: flex-end; gap: 2px; padding: 2px;
+  }
+  .vu-bar {
+    flex: 1; border-radius: 2px 2px 0 0;
+    background: linear-gradient(to top, var(--green) 0%, var(--yellow) 75%, var(--accent2) 100%);
+    height: 0%; transition: height .05s ease-out;
+  }
+
+  /* Lautstärke-Schieberegler */
+  .vol-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 5px; border-radius: 3px;
+    background: var(--border); cursor: pointer; outline: none;
+  }
+  .vol-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+    transition: transform .1s;
+  }
+  .vol-slider::-webkit-slider-thumb:hover { transform: scale(1.3); }
+  .vol-slider::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: none;
+  }
+  .vol-slider:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+  /* Lautstärke-Wert */
+  .vol-val {
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text-sec);
+    font-weight: 700;
+  }
+
+  /* Pan */
+  .pan-row { display: flex; align-items: center; gap: 4px; width: 100%; }
+  .pan-label {
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text-sec);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .pan-slider {
+    -webkit-appearance: none; appearance: none;
+    flex: 1; height: 4px; border-radius: 2px;
+    background: var(--border); cursor: pointer; outline: none;
+  }
+  .pan-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent2); cursor: pointer;
+  }
+  .pan-slider::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--accent2); border: none;
+  }
+  .pan-slider:focus-visible { outline: 2px solid var(--accent2); outline-offset: 3px; border-radius: 3px; }
+
+  /* Mute / Solo */
+  .ms-row { display: flex; gap: 4px; width: 100%; }
+  .ms-btn {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    font-weight: 700;
+    letter-spacing: .05em;
+    padding: 5px 2px;
+    border-radius: 3px;
+    border: 2px solid var(--border);
+    background: transparent;
+    color: var(--text-sec);
+    cursor: pointer; text-align: center;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .ms-btn:hover       { border-color: var(--accent); color: var(--accent); }
+  .ms-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ms-btn.muted       { background: rgba(255,107,53,.25); border-color: var(--accent2); color: var(--accent2); }
+  .ms-btn.soloed      { background: rgba(255,215,0,.2);   border-color: var(--yellow);  color: var(--yellow); }
+
+  /* ── Status-Log ───────────────────────────────────────────────────── */
+  #status-log {
+    font-family: var(--font-mono);
+    font-size: var(--fz-xs);     /* 12px */
+    color: var(--text-sec);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    max-height: 90px; overflow-y: auto;
+    line-height: 1.8;
+  }
+  #status-log .err  { color: var(--accent2); font-weight: 700; }
+  #status-log .ok   { color: var(--green);   font-weight: 700; }
+  #status-log .info { color: var(--accent);  font-weight: 600; }
+
+  /* ── Scrollbar ────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar       { width: 7px; height: 7px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-sec); }
+
+  /* ── Responsive ───────────────────────────────────────────────────── */
+  @media(max-width:480px) {
+    .transport { flex-direction: column; align-items: stretch; }
+    .transport-extras { justify-content: space-between; }
+  }
 </style>
 </head>
 <body>
@@ -168,7 +502,7 @@
     <div class="card">
       <div class="card-title">
         MIDI Bibliothek
-        <span id="midi-count" style="margin-left:auto;color:var(--muted);font-size:.8em;font-family:var(--font-mono)"></span>
+        <span id="midi-count" style="margin-left:auto;color:var(--text-sec);font-size:var(--fz-xs);font-family:var(--font-mono);font-weight:700"></span>
       </div>
       <input type="search" class="search-input" id="midi-search" placeholder="Suchen …" aria-label="MIDI-Dateien suchen">
       <ul class="midi-list" id="midi-list" role="listbox" aria-label="MIDI-Dateien aus /midifiles">
@@ -190,9 +524,9 @@
   </div>
   <!-- Pfad-Konfiguration -->
   <details class="card" id="path-config" style="cursor:pointer">
-    <summary style="font-family:var(--font-mono);font-size:.78rem;letter-spacing:.1em;color:var(--text-dim);list-style:none;display:flex;align-items:center;gap:8px;user-select:none">
+    <summary style="font-family:var(--font-mono);font-size:var(--fz-xs);letter-spacing:.1em;color:var(--text-sec);list-style:none;display:flex;align-items:center;gap:8px;user-select:none;font-weight:700">
       <span style="color:var(--accent)">⚙</span> PFAD-KONFIGURATION
-      <span style="margin-left:auto;font-size:.7em;color:var(--muted)">(aufklappen falls Dateien nicht gefunden werden)</span>
+      <span style="margin-left:auto;font-size:var(--fz-xs);color:var(--text-sec);font-weight:600">(aufklappen falls Dateien nicht gefunden werden)</span>
     </summary>
     <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
       <div>
@@ -200,10 +534,10 @@
         <div style="display:flex;gap:8px">
           <input type="text" id="sf-base-input" value="soundfonts/"
                  style="flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
-                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:.84rem;outline:none"
+                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:var(--fz-sm);outline:none;font-weight:600"
                  aria-label="Pfad zum Soundfont-Ordner"
                  placeholder="z.B. soundfonts/ oder /assets/sf2/">
-          <button class="btn" onclick="loadSoundfontList()" style="padding:8px 12px;font-size:.8rem">↺ Neu laden</button>
+          <button class="btn" onclick="loadSoundfontList()" style="padding:8px 12px;font-size:var(--fz-xs);font-weight:700">↺ Neu laden</button>
         </div>
       </div>
       <div>
@@ -211,14 +545,14 @@
         <div style="display:flex;gap:8px">
           <input type="text" id="midi-base-input" value="midifiles/"
                  style="flex:1;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);
-                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:.84rem;outline:none"
+                        color:var(--text);padding:8px 10px;font-family:var(--font-mono);font-size:var(--fz-sm);outline:none;font-weight:600"
                  aria-label="Pfad zum MIDI-Ordner"
                  placeholder="z.B. midifiles/ oder /assets/midi/">
-          <button class="btn" onclick="loadMidiList()" style="padding:8px 12px;font-size:.8rem">↺ Neu laden</button>
+          <button class="btn" onclick="loadMidiList()" style="padding:8px 12px;font-size:var(--fz-xs);font-weight:700">↺ Neu laden</button>
         </div>
       </div>
     </div>
-    <div style="margin-top:10px;font-size:.75rem;color:var(--muted);font-family:var(--font-mono)">
+    <div style="margin-top:10px;font-size:var(--fz-xs);color:var(--text-sec);font-family:var(--font-mono);font-weight:600">
       Tipp: Auf GitHub Pages relative Pfade verwenden (z.B. <code style="color:var(--accent)">soundfonts/</code>). 
       Jeder Ordner benötigt eine <code style="color:var(--accent)">manifest.json</code> mit <code style="color:var(--accent)">{"files":["name.sf2"]}</code>
     </div>
@@ -324,7 +658,109 @@ function ticksToSec(tick,tm,tpqn){
 function calcDuration(evs,tpqn){let m=0;for(const e of evs)if(e.tick>m)m=e.tick;return ticksToSec(m,buildTempoMap(evs),tpqn);}
 
 /* ── GM-Namen ────────────────────────────────────────────────────── */
-const GM=['Acoustic Grand Piano','Bright Acoustic Piano','Electric Grand Piano','Honky-tonk Piano','Electric Piano 1','Electric Piano 2','Harpsichord','Clavinet','Celesta','Glockenspiel','Music Box','Vibraphone','Marimba','Xylophone','Tubular Bells','Dulcimer','Drawbar Organ','Percussive Organ','Rock Organ','Church Organ','Reed Organ','Accordion','Harmonica','Tango Accordion','Acoustic Guitar (nylon)','Acoustic Guitar (steel)','Electric Guitar (jazz)','Electric Guitar (clean)','Electric Guitar (muted)','Overdriven Guitar','Distortion Guitar','Guitar harmonics','Acoustic Bass','Electric Bass (finger)','Electric Bass (pick)','Fretless Bass','Slap Bass 1','Slap Bass 2','Synth Bass 1','Synth Bass 2','Violin','Viola','Cello','Contrabass','Tremolo Strings','Pizzicato Strings','Orchestral Harp','Timpani','String Ensemble 1','String Ensemble 2','SynthStrings 1','SynthStrings 2','Choir Aahs','Voice Oohs','Synth Voice','Orchestra Hit','Trumpet','Trombone','Tuba','Muted Trumpet','French Horn','Brass Section','SynthBrass 1','SynthBrass 2','Soprano Sax','Alto Sax','Tenor Sax','Baritone Sax','Oboe','English Horn','Bassoon','Clarinet','Piccolo','Flute','Recorder','Pan Flute','Blown bottle','Shakuhachi','Whistle','Ocarina','Lead 1 (square)','Lead 2 (sawtooth)','Lead 3 (calliope)','Lead 4 (chiff)','Lead 5 (charang)','Lead 6 (voice)','Lead 7 (fifths)','Lead 8 (bass+lead)','Pad 1 (new age)','Pad 2 (warm)','Pad 3 (polysynth)','Pad 4 (choir)','Pad 5 (bowed)','Pad 6 (metallic)','Pad 7 (halo)','Pad 8 (sweep)','FX 1 (rain)','FX 2 (soundtrack)','FX 3 (crystal)','FX 4 (atmosphere)','FX 5 (brightness)','FX 6 (goblins)','FX 7 (echoes)','FX 8 (sci-fi)','Sitar','Banjo','Shamisen','Koto','Kalimba','Bag pipe','Fiddle','Shanai','Tinkle Bell','Agogo','Steel Drums','Woodblock','Taiko Drum','Melodic Tom','Synth Drum','Reverse Cymbal','Guitar Fret Noise','Breath Noise','Seashore','Bird Tweet','Telephone Ring','Helicopter','Applause','Gunshot'];
+/* GM-Instrument-Namen: Index 0 = PC#1, Index 127 = PC#128 (0-basiert, wie MIDI-Protokoll)
+   Familien nach GM-Standard:
+   PC# 1-8   (idx 0-7)   Piano
+   PC# 9-16  (idx 8-15)  Chromatic Percussion
+   PC# 17-24 (idx 16-23) Organ
+   PC# 25-32 (idx 24-31) Guitar
+   PC# 33-40 (idx 32-39) Bass
+   PC# 41-48 (idx 40-47) Strings
+   PC# 49-56 (idx 48-55) Ensemble
+   PC# 57-64 (idx 56-63) Brass
+   PC# 65-72 (idx 64-71) Reed
+   PC# 73-80 (idx 72-79) Pipe
+   PC# 81-88 (idx 80-87) Synth Lead
+   PC# 89-96 (idx 88-95) Synth Pad
+   PC# 97-104 (idx 96-103) Synth Effects
+   PC# 105-112 (idx 104-111) Ethnic
+   PC# 113-120 (idx 112-119) Percussive
+   PC# 121-128 (idx 120-127) Sound Effects
+*/
+const GM = [
+  // PC# 1-8: Piano (idx 0-7)
+  'Acoustic Grand Piano','Bright Acoustic Piano','Electric Grand Piano','Honky-tonk Piano',
+  'Electric Piano 1','Electric Piano 2','Harpsichord','Clavinet',
+  // PC# 9-16: Chromatic Percussion (idx 8-15)
+  'Celesta','Glockenspiel','Music Box','Vibraphone','Marimba','Xylophone','Tubular Bells','Dulcimer',
+  // PC# 17-24: Organ (idx 16-23)
+  'Drawbar Organ','Percussive Organ','Rock Organ','Church Organ','Reed Organ','Accordion','Harmonica','Tango Accordion',
+  // PC# 25-32: Guitar (idx 24-31)
+  'Acoustic Guitar (nylon)','Acoustic Guitar (steel)','Electric Guitar (jazz)','Electric Guitar (clean)',
+  'Electric Guitar (muted)','Overdriven Guitar','Distortion Guitar','Guitar harmonics',
+  // PC# 33-40: Bass (idx 32-39)
+  'Acoustic Bass','Electric Bass (finger)','Electric Bass (pick)','Fretless Bass',
+  'Slap Bass 1','Slap Bass 2','Synth Bass 1','Synth Bass 2',
+  // PC# 41-48: Strings (idx 40-47)
+  'Violin','Viola','Cello','Contrabass','Tremolo Strings','Pizzicato Strings','Orchestral Harp','Timpani',
+  // PC# 49-56: Ensemble (idx 48-55)
+  'String Ensemble 1','String Ensemble 2','SynthStrings 1','SynthStrings 2',
+  'Choir Aahs','Voice Oohs','Synth Voice','Orchestra Hit',
+  // PC# 57-64: Brass (idx 56-63)
+  'Trumpet','Trombone','Tuba','Muted Trumpet','French Horn','Brass Section','SynthBrass 1','SynthBrass 2',
+  // PC# 65-72: Reed (idx 64-71)
+  'Soprano Sax','Alto Sax','Tenor Sax','Baritone Sax','Oboe','English Horn','Bassoon','Clarinet',
+  // PC# 73-80: Pipe (idx 72-79)
+  'Piccolo','Flute','Recorder','Pan Flute','Blown Bottle','Shakuhachi','Whistle','Ocarina',
+  // PC# 81-88: Synth Lead (idx 80-87)
+  'Lead 1 (square)','Lead 2 (sawtooth)','Lead 3 (calliope)','Lead 4 (chiff)',
+  'Lead 5 (charang)','Lead 6 (voice)','Lead 7 (fifths)','Lead 8 (bass+lead)',
+  // PC# 89-96: Synth Pad (idx 88-95)
+  'Pad 1 (new age)','Pad 2 (warm)','Pad 3 (polysynth)','Pad 4 (choir)',
+  'Pad 5 (bowed)','Pad 6 (metallic)','Pad 7 (halo)','Pad 8 (sweep)',
+  // PC# 97-104: Synth Effects (idx 96-103)
+  'FX 1 (rain)','FX 2 (soundtrack)','FX 3 (crystal)','FX 4 (atmosphere)',
+  'FX 5 (brightness)','FX 6 (goblins)','FX 7 (echoes)','FX 8 (sci-fi)',
+  // PC# 105-112: Ethnic (idx 104-111)
+  'Sitar','Banjo','Shamisen','Koto','Kalimba','Bag Pipe','Fiddle','Shanai',
+  // PC# 113-120: Percussive (idx 112-119)
+  'Tinkle Bell','Agogo','Steel Drums','Woodblock','Taiko Drum','Melodic Tom','Synth Drum','Reverse Cymbal',
+  // PC# 121-128: Sound Effects (idx 120-127)
+  'Guitar Fret Noise','Breath Noise','Seashore','Bird Tweet','Telephone Ring','Helicopter','Applause','Gunshot'
+];
+
+/* GM-Familie anhand Programm-Nummer (0-basiert) */
+function gmFamily(prog) {
+  // prog ist 0–127 (MIDI-Wert), GM-PC# = prog+1
+  const pc = prog + 1;
+  if (pc <=   8) return 'Piano';
+  if (pc <=  16) return 'Chromatic Perc';
+  if (pc <=  24) return 'Organ';
+  if (pc <=  32) return 'Guitar';
+  if (pc <=  40) return 'Bass';
+  if (pc <=  48) return 'Strings';
+  if (pc <=  56) return 'Ensemble';
+  if (pc <=  64) return 'Brass';
+  if (pc <=  72) return 'Reed';
+  if (pc <=  80) return 'Pipe';
+  if (pc <=  88) return 'Synth Lead';
+  if (pc <=  96) return 'Synth Pad';
+  if (pc <= 104) return 'Synth FX';
+  if (pc <= 112) return 'Ethnic';
+  if (pc <= 120) return 'Percussive';
+  return 'Sound FX';
+}
+
+/* Oscillator-Wellenform passend zur GM-Familie */
+function gmOscType(prog) {
+  const pc = prog + 1;
+  if (pc <=  8)  return 'triangle';   // Piano       → weich
+  if (pc <= 16)  return 'sine';       // Chr. Perc   → sinusförmig
+  if (pc <= 24)  return 'sine';       // Organ       → sinusförmig
+  if (pc <= 32)  return 'triangle';   // Guitar      → zupf-ähnlich
+  if (pc <= 40)  return 'sawtooth';   // Bass        → obertonnreich
+  if (pc <= 48)  return 'sawtooth';   // Strings     → streichend
+  if (pc <= 56)  return 'sine';       // Ensemble    → weich
+  if (pc <= 64)  return 'sawtooth';   // Brass       → blechblasinstr.
+  if (pc <= 72)  return 'sawtooth';   // Reed        → rohrblatt
+  if (pc <= 80)  return 'sine';       // Pipe        → flötenähnlich
+  if (pc <= 88)  return 'square';     // Synth Lead  → rechteck
+  if (pc <= 96)  return 'sine';       // Synth Pad   → weich
+  if (pc <= 104) return 'sine';       // Synth FX    → weich
+  if (pc <= 112) return 'sawtooth';   // Ethnic      → komplex
+  if (pc <= 120) return 'square';     // Percussive  → schlagzeug
+  return 'sine';                      // Sound FX
+}
 
 /* ── Audio ───────────────────────────────────────────────────────── */
 let audioCtx=null;
@@ -468,12 +904,26 @@ async function preloadWAFBuffers() {
 
 /* Passenden AudioBuffer für Instrument/Note finden */
 function findBuffer(prog, note) {
-  // Exakt oder nächste Note im selben Programm
-  let bank = bufCache[prog];
-  if (!bank) bank = bufCache[0];         // Fallback auf Prog 0
+  /* prog kommt als MIDI-Wert 0-127 (0-basiert).
+     GM PC# = prog + 1.
+     WAF-Libs speichern Programme manchmal 0-basiert, manchmal 1-basiert –
+     wir probieren: prog, prog+1, 0 (Fallback). */
+  const candidates = [prog, prog + 1, 0];
+  let bank = null;
+  for (const p of candidates) {
+    if (bufCache[p] && Object.keys(bufCache[p]).length > 0) { bank = bufCache[p]; break; }
+  }
+  if (!bank) {
+    // Letzter Ausweg: irgendeine vorhandene Bank
+    const keys = Object.keys(bufCache);
+    if (keys.length) bank = bufCache[keys[0]];
+  }
   if (!bank) return null;
+
+  // Exakter Treffer
   if (bank[note]) return { buf: bank[note], origNote: +note };
-  // Nächste Note
+
+  // Nächste Note im Bank
   let closest = null, minDist = 999;
   for (const n of Object.keys(bank)) {
     const d = Math.abs(n - note);
@@ -494,6 +944,10 @@ function schedNoteOn(ch, note, vel, when) {
   chVU[ch] = Math.min(1, vel / 127);
 
   const v01 = vel / 127;
+  /* MIDI-Protokoll: chProg[ch] ist 0-basiert (0=PC#1, 127=PC#128).
+     Kanal 9 (0-basiert) = GM Channel 10 = immer Drums.
+     Für Drums nutzen wir Schlüssel 128 (außerhalb 0-127), damit
+     Drum-Samples von Melodie-Samples getrennt bleiben. */
   const prog = ch === 9 ? 128 : (chProg[ch] || 0);
 
   /* ── SF2 / WAF ── */
@@ -525,25 +979,9 @@ function schedNoteOn(ch, note, vel, when) {
   const freq = 440 * Math.pow(2, (note - 69) / 12);
   const osc  = ctx.createOscillator();
   const env  = ctx.createGain();
-  // GM-Channel 9 = Percussion: kurze Geräusch-Wellenform
-  osc.type = ch === 9 ? 'square' : 'triangle';
-  // Bessere GM-Approximation nach Instrument-Familie
-  if (ch !== 9) {
-    const p = chProg[ch] || 0;
-    if (p < 8)        osc.type = 'triangle';   // Piano
-    else if (p < 16)  osc.type = 'sine';        // Chromatic Perc
-    else if (p < 24)  osc.type = 'sine';        // Organ
-    else if (p < 32)  osc.type = 'triangle';   // Guitar
-    else if (p < 40)  osc.type = 'sawtooth';   // Bass
-    else if (p < 48)  osc.type = 'sawtooth';   // Strings
-    else if (p < 56)  osc.type = 'sine';        // Ensemble
-    else if (p < 64)  osc.type = 'sawtooth';   // Brass
-    else if (p < 72)  osc.type = 'sawtooth';   // Reed
-    else if (p < 80)  osc.type = 'sine';        // Pipe
-    else if (p < 88)  osc.type = 'square';     // Synth Lead
-    else if (p < 96)  osc.type = 'sine';        // Synth Pad
-    else              osc.type = 'sawtooth';
-  }
+  // GM-Channel 9 (0-basiert) = Channel 10 = Standard-Drums
+  // Oscillator-Typ nach GM-Familie (prog ist 0-basiert wie MIDI)
+  osc.type = ch === 9 ? 'square' : gmOscType(chProg[ch] || 0);
   osc.frequency.value = freq;
   env.gain.setValueAtTime(0, when);
   env.gain.linearRampToValueAtTime(v01 * 0.35, when + 0.01);
@@ -742,7 +1180,21 @@ function updateButtons(){
   document.getElementById('btn-stop').disabled=!has||(!playing&&!paused);
   document.getElementById('btn-pause').innerHTML=paused?'▶ RESUME':'⏸ PAUSE';
 }
-function updateChName(ch,prog){const n=ch===9?'Drums':(GM[prog]||`Prog ${prog}`);if(mc[ch]){mc[ch].name.textContent=n;mc[ch].strip.classList.toggle('drum',ch===9);}}
+function updateChName(ch, prog) {
+  // prog ist 0-basiert (MIDI-Protokoll), GM[prog] = PC# (prog+1)
+  let name;
+  if (ch === 9) {
+    name = 'Drums';
+  } else {
+    const instrName = GM[prog] || `PC#${prog+1}`;
+    name = instrName;
+  }
+  if (mc[ch]) {
+    mc[ch].name.textContent = name;
+    mc[ch].name.title = ch === 9 ? 'Channel 10: GM Drums' : `PC#${prog+1} · ${gmFamily(prog)}`;
+    mc[ch].strip.classList.toggle('drum', ch === 9);
+  }
+}
 function updateMixerNames(){for(let i=0;i<16;i++)updateChName(i,chProg[i]);}
 
 /* ── Mixer ───────────────────────────────────────────────────────── */
