@@ -867,65 +867,106 @@ function parseSF2(buf){
 const bufCache = {};   // bufCache[prog][note] = AudioBuffer (decoded)
 let   preloading = false;
 
-/* SF2: Alle Samples vorab dekodieren */
+/* SF2: Samples aus sf2Data in bufCache überführen (bereits AudioBuffer) */
 async function preloadSF2Buffers() {
-  const ctx = getCtx();
   for (const prog of Object.keys(sf2Data)) {
-    if (!bufCache[prog]) bufCache[prog] = {};
+    const p = +prog;
+    if (!bufCache[p]) bufCache[p] = {};
     for (const note of Object.keys(sf2Data[prog])) {
-      if (bufCache[prog][note]) continue;
-      bufCache[prog][note] = sf2Data[prog][note].buffer; // already AudioBuffer
+      const sd = sf2Data[prog][note];
+      // sd.buffer ist bereits ein AudioBuffer aus parseSF2()
+      bufCache[p][+note] = sd.buffer;
     }
   }
+  const total = Object.values(bufCache).reduce((s,b)=>s+Object.keys(b).length,0);
+  log(`SF2: ${total} Samples in Buffer-Cache`, 'ok');
 }
 
-/* WAF: Alle base64-Samples vorab dekodieren */
+/* WAF: base64-kodierte Samples dekodieren und in bufCache ablegen */
 async function preloadWAFBuffers() {
   const ctx = getCtx();
   const jobs = [];
-  for (const prog of Object.keys(wafBufs)) {
-    if (!bufCache[prog]) bufCache[prog] = {};
-    for (const note of Object.keys(wafBufs[prog])) {
-      if (bufCache[prog][note]) continue;
-      const zd = wafBufs[prog][note];
+
+  for (const progKey of Object.keys(wafBufs)) {
+    const p = +progKey;
+    // WAF-Programme sind manchmal 0-basiert, manchmal 1-basiert.
+    // Wir legen beide Varianten ab: prog UND prog-1 (falls >0)
+    const aliases = new Set([p]);
+    if (p > 0) aliases.add(p - 1);  // 1-basiert → 0-basiert
+    if (p < 127) aliases.add(p + 1); // 0-basiert → 1-basiert
+
+    for (const alias of aliases) {
+      if (!bufCache[alias]) bufCache[alias] = {};
+    }
+
+    for (const noteKey of Object.keys(wafBufs[progKey])) {
+      const n  = +noteKey;
+      const zd = wafBufs[progKey][noteKey];
+      if (zd._abuf) {
+        // Bereits dekodiert
+        for (const alias of aliases) bufCache[alias][n] = zd._abuf;
+        continue;
+      }
       jobs.push(
         ctx.decodeAudioData(zd.encoded.slice(0))
-          .then(ab => { bufCache[prog][note] = ab; zd._abuf = ab; })
-          .catch(() => {})
+          .then(ab => {
+            zd._abuf = ab;
+            for (const alias of aliases) bufCache[alias][n] = ab;
+          })
+          .catch(e => console.warn('WAF decode error:', e))
       );
     }
   }
+
   if (jobs.length) {
     log(`Dekodiere ${jobs.length} WAF-Samples …`, 'info');
     await Promise.all(jobs);
-    log('WAF-Samples dekodiert', 'ok');
+    const total = Object.values(bufCache).reduce((s,b)=>s+Object.keys(b).length,0);
+    log(`WAF: ${total} Samples dekodiert und gecacht`, 'ok');
   }
 }
 
 /* Passenden AudioBuffer für Instrument/Note finden */
 function findBuffer(prog, note) {
-  /* prog kommt als MIDI-Wert 0-127 (0-basiert).
-     GM PC# = prog + 1.
-     WAF-Libs speichern Programme manchmal 0-basiert, manchmal 1-basiert –
-     wir probieren: prog, prog+1, 0 (Fallback). */
-  const candidates = [prog, prog + 1, 0];
+  /* prog = MIDI-Programmnummer 0-basiert (0=PC#1 … 127=PC#128)
+     Kanal 9 Drums: prog=-1 → suche in bufCache[128]
+     
+     WAF-Soundfonts: ein JS-File enthält oft NUR ein Instrument (prog X).
+     SF2: alle Samples in sf2Data[0] (vereinfachter Parser).
+     
+     Suchstrategie:
+     1. bufCache[prog]          – exaktes Programm (0-basiert)
+     2. bufCache[prog+1]        – manche WAF-Libs sind 1-basiert
+     3. bufCache[128]           – Drums-Bank
+     4. bufCache[0]             – Fallback Acoustic Piano
+     5. Erste verfügbare Bank   – letzter Ausweg
+  */
+  const isDrum = (prog === -1 || prog === 128);
+  const searchOrder = isDrum
+    ? [128, 0]
+    : [prog, prog + 1, 0];
+
   let bank = null;
-  for (const p of candidates) {
-    if (bufCache[p] && Object.keys(bufCache[p]).length > 0) { bank = bufCache[p]; break; }
+  for (const p of searchOrder) {
+    if (bufCache[p] && Object.keys(bufCache[p]).length > 0) {
+      bank = bufCache[p];
+      break;
+    }
   }
+  // Letzter Ausweg: irgendeine Bank
   if (!bank) {
-    // Letzter Ausweg: irgendeine vorhandene Bank
     const keys = Object.keys(bufCache);
     if (keys.length) bank = bufCache[keys[0]];
   }
   if (!bank) return null;
 
-  // Exakter Treffer
-  if (bank[note]) return { buf: bank[note], origNote: +note };
+  // Exakter Note-Treffer
+  if (bank[note] instanceof AudioBuffer) return { buf: bank[note], origNote: +note };
 
-  // Nächste Note im Bank
+  // Nächste Note
   let closest = null, minDist = 999;
   for (const n of Object.keys(bank)) {
+    if (!(bank[n] instanceof AudioBuffer)) continue;
     const d = Math.abs(n - note);
     if (d < minDist) { minDist = d; closest = n; }
   }
@@ -944,11 +985,10 @@ function schedNoteOn(ch, note, vel, when) {
   chVU[ch] = Math.min(1, vel / 127);
 
   const v01 = vel / 127;
-  /* MIDI-Protokoll: chProg[ch] ist 0-basiert (0=PC#1, 127=PC#128).
-     Kanal 9 (0-basiert) = GM Channel 10 = immer Drums.
-     Für Drums nutzen wir Schlüssel 128 (außerhalb 0-127), damit
-     Drum-Samples von Melodie-Samples getrennt bleiben. */
-  const prog = ch === 9 ? 128 : (chProg[ch] || 0);
+  /* MIDI ch 9 (0-basiert) = GM Channel 10 = Standard-Drums.
+     chProg[ch] ist 0-basiert (MIDI-Protokoll: 0=PC#1 … 127=PC#128).
+     chProg[9] wird auf -1 gesetzt → findBuffer erkennt Drums. */
+  const prog = (ch === 9) ? -1 : (chProg[ch] !== undefined ? chProg[ch] : 0);
 
   /* ── SF2 / WAF ── */
   if (!useOscFb) {
@@ -1181,19 +1221,24 @@ function updateButtons(){
   document.getElementById('btn-pause').innerHTML=paused?'▶ RESUME':'⏸ PAUSE';
 }
 function updateChName(ch, prog) {
-  // prog ist 0-basiert (MIDI-Protokoll), GM[prog] = PC# (prog+1)
-  let name;
+  // prog ist 0-basiert (MIDI-Protokoll)
+  if (!mc[ch]) return;
+  let name, title;
   if (ch === 9) {
-    name = 'Drums';
+    name  = mc[ch].name.textContent || 'Drums'; // Behalte File-Namen
+    title = 'GM Channel 10: Standard Drums';
+    mc[ch].strip.classList.add('drum');
   } else {
-    const instrName = GM[prog] || `PC#${prog+1}`;
-    name = instrName;
+    const gmName = GM[prog] || `PC#${prog+1}`;
+    // Behalte Track-Namen aus dem File wenn gesetzt, sonst GM-Name
+    const existing = mc[ch].name.textContent;
+    name  = (existing && existing !== '–' && existing !== 'Piano') ? existing : gmName;
+    title = `PC#${prog+1} · ${gmFamily(prog)} · ${gmName}`;
+    mc[ch].strip.classList.remove('drum');
+    mc[ch].strip.style.opacity = '1';
   }
-  if (mc[ch]) {
-    mc[ch].name.textContent = name;
-    mc[ch].name.title = ch === 9 ? 'Channel 10: GM Drums' : `PC#${prog+1} · ${gmFamily(prog)}`;
-    mc[ch].strip.classList.toggle('drum', ch === 9);
-  }
+  mc[ch].name.textContent = name;
+  mc[ch].name.title = title;
 }
 function updateMixerNames(){for(let i=0;i<16;i++)updateChName(i,chProg[i]);}
 
@@ -1239,18 +1284,97 @@ function vuLoop(){
 }
 
 /* ── MIDI-Buffer laden ───────────────────────────────────────────── */
-function loadMidiBuffer(name,buffer){
+function loadMidiBuffer(name, buffer) {
   stop();
-  try{
-    const parser=new MidiParser(buffer);midi=parser.parse();
-    tpqn=midi.header.ticksPerBeat||480;events=mergeTracks(midi);tempoMap=buildTempoMap(events);
-    totalSec=calcDuration(events,tpqn);document.getElementById('time-tot').textContent=fmt(totalSec);
-    document.getElementById('file-name').textContent=name;
-    const ft=tempoMap.find(t=>t.usPerBeat);if(ft)document.getElementById('tempo-display').textContent=Math.round(60e6/ft.usPerBeat)+' BPM';
-    for(let i=0;i<16;i++)chProg[i]=0;chProg[9]=128;updateMixerNames();
-    log(`${name} geladen — Format ${midi.header.format}, ${midi.header.numTracks} Track(s), ${fmt(totalSec)}`,'ok');
+  try {
+    const parser = new MidiParser(buffer);
+    midi = parser.parse();
+    tpqn = midi.header.ticksPerBeat || 480;
+    events = mergeTracks(midi);
+    tempoMap = buildTempoMap(events);
+    totalSec = calcDuration(events, tpqn);
+    document.getElementById('time-tot').textContent = fmt(totalSec);
+    document.getElementById('file-name').textContent = name;
+    const ft = tempoMap.find(t => t.usPerBeat);
+    if (ft) document.getElementById('tempo-display').textContent = Math.round(60e6 / ft.usPerBeat) + ' BPM';
+
+    // ── Initiale Kanal-Belegung aus dem MIDI-File lesen ──────────────
+    // Alle 16 Kanäle auf Default setzen
+    for (let i = 0; i < 16; i++) chProg[i] = 0;
+    // Kanal 9 (0-basiert) = GM Drums – immer
+    chProg[9] = -1; // -1 = Drums-Marker
+
+    // Ersten ProgramChange pro Kanal scannen (tick=0 Events)
+    // und Track-Namen für Mixer übernehmen
+    const trackNames = {};
+    for (const track of midi.tracks) {
+      let trackCh = -1;
+      for (const ev of track) {
+        if (ev.type === 'trackName' && ev.tick === 0) {
+          // Merken für späteren Kanal-Lookup
+          if (trackCh >= 0) trackNames[trackCh] = ev.name;
+        }
+        if (ev.type === 'programChange' && ev.tick === 0) {
+          chProg[ev.ch] = ev.prog;
+          trackNames[ev.ch] = trackNames[ev.ch] || null;
+          trackCh = ev.ch;
+        }
+        // Track-Name vor ProgramChange → rückwärts zuordnen
+        if (ev.type === 'noteOn') break; // nach ersten Noten aufhören
+      }
+    }
+    // Track-Namen nochmal korrekt zuordnen (Name kommt vor ProgramChange)
+    for (const track of midi.tracks) {
+      let tName = null, tCh = -1;
+      for (const ev of track) {
+        if (ev.type === 'trackName') tName = ev.name;
+        if (ev.type === 'programChange' && ev.tick === 0) tCh = ev.ch;
+        if (ev.type === 'noteOn') break;
+      }
+      if (tCh >= 0 && tName) trackNames[tCh] = tName;
+    }
+
+    // Mixer-Strips aktualisieren mit echten Instrumentnamen aus dem File
+    for (let i = 0; i < 16; i++) {
+      if (mc[i]) {
+        const isDrum = (i === 9);
+        const prog   = chProg[i];
+        // Priorität: 1. TrackName aus File, 2. GM-Name, 3. "–"
+        let name;
+        if (isDrum) {
+          name = trackNames[i] || 'Drums';
+        } else if (trackNames[i]) {
+          name = trackNames[i]; // exakter Name aus dem MIDI-File
+        } else if (prog > 0 || events.some(e => e.type === 'programChange' && e.ch === i)) {
+          name = GM[prog] || `PC#${prog + 1}`;
+        } else {
+          name = '–'; // Kanal nicht belegt
+        }
+        mc[i].name.textContent = name;
+        mc[i].name.title = isDrum
+          ? 'GM Channel 10: Drums'
+          : `PC#${prog + 1} · ${gmFamily(prog)} · ${GM[prog] || ''}`;
+        mc[i].strip.classList.toggle('drum', isDrum);
+        // Nicht belegte Kanäle abdunkeln
+        const active = isDrum || trackNames[i] || events.some(e => (e.type==='noteOn'||e.type==='programChange') && e.ch===i);
+        mc[i].strip.style.opacity = active ? '1' : '0.35';
+      }
+    }
+
+    log(`${name} geladen — Format ${midi.header.format}, ${midi.header.numTracks} Track(s), ${fmt(totalSec)}`, 'ok');
+    // Instrumente ausgeben
+    for (let i = 0; i < 16; i++) {
+      if (events.some(e => e.ch === i)) {
+        const isDrum = (i === 9);
+        const pname  = isDrum ? 'Drums (CH10)' : `PC#${chProg[i]+1} ${GM[chProg[i]]||''}`;
+        log(`  CH${i+1}: ${pname}${trackNames[i] ? ' ["'+trackNames[i]+'"]' : ''}`, 'info');
+      }
+    }
     updateButtons();
-  }catch(err){log(`MIDI-Fehler: ${err.message}`,'err');}
+  } catch(err) {
+    log(`MIDI-Fehler: ${err.message}`, 'err');
+    console.error(err);
+  }
 }
 
 /* ── Verzeichnis-Listing parsen ──────────────────────────────────── */
